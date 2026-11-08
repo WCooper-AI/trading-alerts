@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+build/
+dist/
+node_modules/
+target/
+src-tauri/gen/
+selfhost/desktop/engine/build/
+selfhost/desktop/engine/dist/
+
+# your own setup and results
+.env
+workspace/
+cloud/data/
+cloud-data/

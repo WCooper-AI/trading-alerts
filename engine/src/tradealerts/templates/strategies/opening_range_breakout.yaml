@@ -1,0 +1,55 @@
+# ---------------------------------------------------------------------------
+# EDUCATIONAL TEMPLATE. Placeholder values that show how session-based rules
+# work. Not a recommendation or a tested strategy. Copy it into strategies/,
+# set your own values, backtest, then set `template: false`.
+#
+# Note: Yahoo only keeps about 60 days of 15-minute data, so backtests on
+# this timeframe are short. Use a CSV export from your broker for more.
+# ---------------------------------------------------------------------------
+name: Opening range breakout (template)
+template: true
+description: >
+  Example of a session rule: mark the high and low of the first 30 minutes,
+  then go long if price closes above that range during the morning.
+
+market:
+  symbol: "^NDX"
+  label: US 100
+  provider: yahoo
+  timeframe: 15m
+
+direction: long
+
+entry:
+  all:
+    - left: close
+      op: crosses_above
+      right: {indicator: opening_range_high, session_start: "09:30", minutes: 30, tz: America/New_York}
+    - time_between: ["10:00", "12:00"]      # PLACEHOLDER: bar start times, New York
+      tz: America/New_York
+    - weekdays: [mon, tue, wed, thu, fri]
+
+exit:
+  # Stop at the other side of the opening range
+  stop:
+    level: {indicator: opening_range_low, session_start: "09:30", minutes: 30, tz: America/New_York}
+  target: {r_multiple: 1.5}                  # PLACEHOLDER
+  # Flatten before the close: the signal on the 15:30 bar exits at the 15:45 open
+  when:
+    time_between: ["15:30", "15:45"]
+    tz: America/New_York
+
+risk:
+  account_size: 1000
+  risk_per_trade_pct: 0.25
+  point_value: 1.0
+  size_step: 0.01
+  min_size: 0.01
+  currency: GBP
+
+costs:
+  spread: 1.0
+
+alerts:
+  enabled: true
+  priority: high

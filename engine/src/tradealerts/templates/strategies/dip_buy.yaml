@@ -1,0 +1,58 @@
+# ---------------------------------------------------------------------------
+# EDUCATIONAL TEMPLATE. Every number below is a placeholder that shows the
+# file format. None of it is a recommendation or a tested strategy.
+#
+# To use it: copy it into your strategies/ folder, choose your own market,
+# rules and risk settings, backtest it, then set `template: false`.
+# Live alerts never run for files marked `template: true`.
+# ---------------------------------------------------------------------------
+name: Dip buy (template)
+template: true
+description: >
+  Example of a pullback rule: buy after price falls a set percentage from its
+  recent high while it is still above a long moving average.
+
+market:
+  symbol: "^GSPC"        # Yahoo symbol. Others: ^NDX (Nasdaq 100), ^GDAXI (DAX), GC=F (gold), SI=F (silver)
+  label: US 500          # name used in alerts
+  provider: yahoo        # yahoo or csv
+  timeframe: 4h          # 15m, 30m, 1h, 4h, 1d ...
+
+direction: long          # long or short
+
+entry:
+  all:
+    - left: {indicator: pct_from_high, period: 30}   # % below the 30-bar high
+      op: "<="
+      right: -3.0                                     # PLACEHOLDER
+    - left: close
+      op: ">"
+      right: {indicator: sma, period: 200}            # PLACEHOLDER
+    - left: {indicator: rsi, period: 14}
+      op: "<"
+      right: 35                                       # PLACEHOLDER
+
+exit:
+  stop: {atr: 2.0, atr_period: 14}    # PLACEHOLDER. Also: {percent: 1.5}, {points: 40}, {level: <operand>}
+  target: {r_multiple: 2.0}           # PLACEHOLDER. Also: {atr: 3}, {percent: 3}, {points: 80}, {level: ...}
+  max_bars: 30                        # close after this many bars (optional)
+  # when:                             # optional exit rule, closes at the next bar's open
+  #   left: close
+  #   op: crosses_above
+  #   right: {indicator: sma, period: 20}
+
+risk:
+  account_size: 1000          # your paper/backtest balance
+  risk_per_trade_pct: 0.5     # % of balance lost if the stop is hit
+  point_value: 1.0            # money per point for 1 unit of size (check your broker)
+  size_step: 0.01             # smallest size increment your broker allows
+  min_size: 0.01
+  currency: GBP
+
+costs:
+  spread: 0.6                 # full spread in points (check your broker)
+  funding_pct: 6.0            # PLACEHOLDER: yearly overnight funding % (check your broker)
+
+alerts:
+  enabled: true
+  priority: high              # ntfy priority: min, low, default, high, urgent

@@ -1,0 +1,37 @@
+# Your strategy. Fill in every value yourself; see examples/ for the format
+# and README.md for the full list of indicators and rule types.
+name: __NAME__
+template: true          # set to false once you've backtested and want live alerts
+
+market:
+  symbol: ""            # e.g. ^GSPC on Yahoo, or a CSV path with provider: csv
+  label: ""
+  provider: yahoo
+  timeframe: 1h
+
+direction: long
+
+entry:
+  all:
+    - left: close
+      op: ">"
+      right: {indicator: sma, period: 50}
+
+exit:
+  stop: {atr: 2.0}
+  target: {r_multiple: 2.0}
+
+risk:
+  account_size: 1000
+  risk_per_trade_pct: 0.5
+  point_value: 1.0
+  size_step: 0.01
+  min_size: 0.01
+  currency: GBP
+
+costs:
+  spread: 0.0
+
+alerts:
+  enabled: true
+  priority: default

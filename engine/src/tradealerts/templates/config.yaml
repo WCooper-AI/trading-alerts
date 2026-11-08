@@ -1,0 +1,30 @@
+# Trading Alerts settings. You can change these in the web interface (Settings),
+# or edit this file. Any value can be read from an environment variable instead,
+# e.g. topic: ${NTFY_TOPIC} or token: ${NTFY_TOKEN:-}
+
+strategies_dir: strategies   # your strategy files; only live ones send alerts
+data_dir: data               # live state (SQLite) and your CSV price files
+reports_dir: reports         # backtest reports from the command line
+poll_minutes: 15             # how often to look for newly closed candles
+
+data:                        # price data for the built-in markets
+  source: dukascopy          # dukascopy (free, no account), yahoo, or oanda (needs a token)
+  # oanda_token: ${OANDA_TOKEN}
+  # oanda_environment: practice
+
+notifiers:
+  - type: console            # prints alerts in the server log
+
+  - type: ntfy               # phone push via ntfy (ntfy.sh or your own server)
+    enabled: false
+    server: https://ntfy.sh
+    topic: ""                # pick something long and random on public ntfy.sh
+    token: ""                # only if your server needs an access token
+
+  - type: discord
+    enabled: false
+    webhook_url: ""
+
+  - type: webhook            # POSTs {title, body, priority, tags} as JSON
+    enabled: false
+    url: ""

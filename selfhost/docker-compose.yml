@@ -1,0 +1,17 @@
+services:
+  tradealerts:
+    build:
+      context: ..                      # the folder that holds engine/ (the release zip changes this to ".")
+      dockerfile: selfhost/Dockerfile
+    image: tradealerts:latest
+    container_name: tradealerts
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TZ: Europe/London
+    ports:
+      # Only reachable from this machine. Put Caddy (or similar) in front for HTTPS.
+      - "127.0.0.1:8321:8321"
+    volumes:
+      # config.yaml, strategies/, data/ (live state, CSV files) and reports/ live here
+      - ./workspace:/work

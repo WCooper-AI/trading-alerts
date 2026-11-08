@@ -1,0 +1,14 @@
+{
+  "name": "trading-alerts-desktop",
+  "private": true,
+  "version": "0.2.0",
+  "scripts": {
+    "dev": "tauri dev",
+    "engine": "python engine/build_engine.py",
+    "build": "python engine/build_engine.py && tauri build --config src-tauri/tauri.bundle.json",
+    "icons": "tauri icon app-icon.png"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.0"
+  }
+}

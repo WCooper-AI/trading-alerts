@@ -1,0 +1,51 @@
+# ---------------------------------------------------------------------------
+# EDUCATIONAL TEMPLATE. Placeholder values that show a breakout with a
+# trailing-style exit rule. Not a recommendation or a tested strategy.
+# Copy it into strategies/, set your own values, backtest, then set
+# `template: false`.
+# ---------------------------------------------------------------------------
+name: Trend breakout (template)
+template: true
+description: >
+  Example of a channel breakout: buy when the close beats the previous
+  55-day high, exit when it closes below the previous 20-day low.
+
+market:
+  symbol: "GC=F"           # gold futures on Yahoo
+  label: Gold
+  provider: yahoo
+  timeframe: 1d
+
+direction: long
+
+entry:
+  all:
+    - left: close
+      op: ">"
+      right: {indicator: highest, period: 55, source: high, shift: 1}   # PLACEHOLDER
+    - left: close
+      op: ">"
+      right: {indicator: ema, period: 100}                             # PLACEHOLDER
+
+exit:
+  stop: {atr: 3.0, atr_period: 20}                                     # PLACEHOLDER
+  when:
+    left: close
+    op: "<"
+    right: {indicator: lowest, period: 20, source: low, shift: 1}      # PLACEHOLDER
+
+risk:
+  account_size: 1000
+  risk_per_trade_pct: 0.5
+  point_value: 1.0
+  size_step: 0.01
+  min_size: 0.01
+  currency: GBP
+
+costs:
+  spread: 0.4
+  funding_pct: 6.0            # PLACEHOLDER: yearly overnight funding % (check your broker)
+
+alerts:
+  enabled: true
+  priority: default
