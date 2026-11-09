@@ -162,6 +162,7 @@ async def restore(request: Request, ws: Workspace = Depends(workspace)):
             p.unlink()
         for name, b in strategies.items():
             (c.strategies_dir / name).write_bytes(b)
+        ws.migrate()  # backups made before 0.2
         if db_copy is not None:
             with ws.store() as store:  # rows go into this version's own tables
                 try:

@@ -80,6 +80,12 @@ class Workspace:
         if not self.trusted:
             c.uploads_dir.mkdir(parents=True, exist_ok=True)
 
+    def migrate(self) -> list[str]:
+        """Bring strategy files saved by older versions up to date. Returns the ids changed."""
+        from .strategy import migrate_strategy_files
+
+        return migrate_strategy_files(self.config().strategies_dir)
+
     # ------------------------------------------------------------------ state
 
     @contextlib.contextmanager

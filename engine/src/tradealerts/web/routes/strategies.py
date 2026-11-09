@@ -13,7 +13,8 @@ from fastapi.responses import Response
 
 from ... import indicators, rules
 from ...recipes import MARKETS, RECIPES, RecipeError, build_strategy, still_matches_recipe
-from ...strategy import ID_RE, StrategyError, dump_strategy, load_strategy, read_raw, strategy_files
+from ...strategy import (ID_RE, StrategyError, dump_strategy, load_strategy, read_raw, strategy_files,
+                         upgrade_legacy_market)
 from ...workspace import Workspace
 from ..common import (
     INDICATOR_LABELS, INDICATOR_SHORT, MARKET_PRESETS, TIMEFRAMES, TIMEZONES, clean, ctx_of, err, workspace,
@@ -190,6 +191,7 @@ def import_strategy(body: dict = Body(...), ws: Workspace = Depends(workspace)):
     if not isinstance(data, dict) or "entry" not in data or "market" not in data:
         err(422, "That isn't a Trading Alerts strategy")
     data = dict(data)
+    upgrade_legacy_market(data)  # files exported before 0.2
     data.pop("enabled", None)
     data["template"] = True
     data["name"] = str(data.get("name") or "Imported strategy")[:120]

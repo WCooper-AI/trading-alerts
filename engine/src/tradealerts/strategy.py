@@ -456,6 +456,44 @@ def dump_strategy(data: dict) -> str:
     return FILE_HEADER + yaml.safe_dump(ordered, sort_keys=False, allow_unicode=True, width=100)
 
 
+def upgrade_legacy_market(data: dict) -> bool:
+    """Point a v0.1 recipe strategy at its built-in market. Returns True if ``data`` changed.
+
+    Before 0.2, strategies made from a recipe stored the market's Yahoo symbol
+    (``symbol: ^FTSE, provider: yahoo``). Built-in markets now use ``provider: auto`` with the
+    market's key, so they follow Settings, Price data and pick up the market's costs.
+    Only strategies whose market is still exactly the recipe's Yahoo market are changed.
+    """
+    from .recipes import MARKETS_BY_KEY
+
+    recipe, market = data.get("recipe"), data.get("market")
+    if not isinstance(recipe, dict) or not isinstance(market, dict):
+        return False
+    builtin = MARKETS_BY_KEY.get(recipe.get("market"))
+    if not builtin or str(market.get("provider", "yahoo")).lower() != "yahoo" or market.get("symbol") != builtin["symbol"]:
+        return False
+    market["provider"] = "auto"
+    market["symbol"] = builtin["key"]
+    market.setdefault("label", builtin["label"])
+    return True
+
+
+def migrate_strategy_files(directory: str | Path) -> list[str]:
+    """Upgrade v0.1 strategy files in a folder in place. Returns the ids changed."""
+    changed = []
+    for sid, p in strategy_files(directory).items():
+        try:
+            data = read_raw(p)
+        except (OSError, yaml.YAMLError):
+            continue  # unreadable files are reported when they're loaded
+        if upgrade_legacy_market(data):
+            tmp = p.with_name(p.name + ".tmp")
+            tmp.write_text(dump_strategy(data), encoding="utf-8")
+            tmp.replace(p)
+            changed.append(sid)
+    return changed
+
+
 def check_runtime(strategy: Strategy) -> None:
     """Evaluate the rules on synthetic data to catch errors YAML checks can't (e.g. bad time zones)."""
     from . import data as data_mod

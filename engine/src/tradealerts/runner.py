@@ -482,5 +482,9 @@ class LiveRunner:
 
 def run_forever(cfg_or_path, notifiers=None) -> None:  # pragma: no cover - loop
     path = cfg_or_path.base_dir / "config.yaml" if isinstance(cfg_or_path, AppConfig) else cfg_or_path
+    from .workspace import Workspace
+
+    for sid in Workspace(path).migrate():
+        log.info("%s: updated to follow Settings, Price data", sid)
     log.info("Live checks running. Ctrl+C to stop.")
     LiveRunner(path).run_blocking()

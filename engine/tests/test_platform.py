@@ -285,3 +285,81 @@ def test_email_settings_keep_password(client, ws):
     saved = yaml.safe_load((ws / "config.yaml").read_text())
     email = next(n for n in saved["notifiers"] if n["type"] == "email")
     assert email["password"] == "app-pass" and email["host"] == "smtp2.example.com"
+
+
+# A recipe strategy as v0.1 saved it: the market's Yahoo symbol instead of its key.
+V01_STRATEGY = """\
+name: Bounce from oversold on UK 100
+template: true
+recipe:
+  id: rsi
+  market: uk100
+  settings: {level: 40, rsi_period: 6, trend_filter: false, stop: normal, target: '2', max_hold: 24,
+             direction: long, timeframe: 1h, balance: 1000, risk_pct: 3, currency: GBP}
+market: {symbol: ^FTSE, label: UK 100, provider: yahoo, timeframe: 1h}
+direction: long
+entry:
+  all:
+  - left: {indicator: rsi, period: 6, source: close}
+    op: crosses_above
+    right: 40
+exit:
+  stop: {atr: 2, atr_period: 14}
+  target: {r_multiple: 2}
+  max_bars: 24
+risk: {account_size: 1000, risk_per_trade_pct: 3, point_value: 1, size_step: 0.01, min_size: 0.01, currency: GBP}
+costs: {spread: 1}
+"""
+
+
+def test_v01_recipe_market_is_upgraded():
+    from tradealerts.recipes import still_matches_recipe
+    from tradealerts.strategy import upgrade_legacy_market
+
+    data = yaml.safe_load(V01_STRATEGY)
+    assert upgrade_legacy_market(data) is True
+    assert data["market"] == {"symbol": "uk100", "label": "UK 100", "provider": "auto", "timeframe": "1h"}
+    assert still_matches_recipe(data)
+    assert upgrade_legacy_market(data) is False  # already done
+    # hand-edited markets are left alone
+    custom = yaml.safe_load(V01_STRATEGY)
+    custom["market"]["symbol"] = "^GSPC"
+    assert upgrade_legacy_market(custom) is False
+    no_recipe = yaml.safe_load(V01_STRATEGY)
+    del no_recipe["recipe"]
+    assert upgrade_legacy_market(no_recipe) is False
+
+
+def test_v01_strategy_files_are_rewritten_on_startup(ws):
+    from tradealerts.strategy import load_strategy
+
+    f = ws / "strategies" / "bounce-from-oversold-on-uk-100.yaml"
+    f.write_text(V01_STRATEGY)
+    client = TestClient(create_app(ws / "config.yaml"))
+    s = load_strategy(f)
+    assert (s.market.provider, s.market.symbol) == ("auto", "uk100")
+    assert s.spread == 1  # the strategy's own setting is kept
+    assert s.funding_pct == 6.0  # blank before, so the market's default applies
+    item = next(x for x in client.get("/api/strategies").json()["strategies"] if x["id"] == "bounce-from-oversold-on-uk-100")
+    assert item["data"]["market"]["provider"] == "auto"
+
+
+def test_v01_strategy_import_is_upgraded(client):
+    new = client.post("/api/strategies/import", json={"yaml": V01_STRATEGY}, headers=H)
+    assert new.status_code == 201
+    got = client.get(f"/api/strategies/{new.json()['id']}").json()["data"]
+    assert (got["market"]["provider"], got["market"]["symbol"]) == ("auto", "uk100")
+
+
+
+def test_v01_strategy_in_a_backup_is_upgraded_on_restore(client, ws):
+    import io
+    import zipfile
+    blob = io.BytesIO()
+    with zipfile.ZipFile(blob, "w") as z:
+        z.writestr("trading-alerts-backup.txt", "Trading Alerts backup")
+        z.writestr("strategies/old-uk100.yaml", V01_STRATEGY)
+    r = client.post("/api/restore", content=blob.getvalue(), headers={**H, "Content-Type": "application/zip"})
+    assert r.status_code == 200, r.text
+    got = client.get("/api/strategies/old-uk100").json()["data"]
+    assert (got["market"]["provider"], got["market"]["symbol"]) == ("auto", "uk100")
