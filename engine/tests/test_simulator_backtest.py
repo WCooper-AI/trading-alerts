@@ -170,3 +170,20 @@ def test_backtest_signals_have_no_lookahead(bars_1h):
         done.drop(columns=["equity_after"]).reset_index(drop=True),
         full.iloc[: len(done)].drop(columns=["equity_after"]).reset_index(drop=True),
     )
+
+
+def test_warmup_follows_the_longest_rule():
+    assert make_strategy().warmup_candles == 300  # never less than the usual 300
+    long = make_strategy(entry={"left": "close", "op": ">", "right": {"indicator": "sma", "period": 250, "shift": 100}},
+                         exit={"stop": {"atr": 2, "atr_period": 80}})
+    assert long.lookback_candles == 481  # ATR(80) settles over 6 periods, plus one candle
+    assert long.warmup_candles == 481
+
+
+def test_backtest_notes_too_little_history(bars_1h):
+    s = make_strategy(entry={"left": "close", "op": ">", "right": {"indicator": "sma", "period": 200}})
+    short = run_backtest(s, bars_1h, start=bars_1h.index[50])
+    assert any("need 200 candles" in n for n in short.notes)
+    enough = run_backtest(s, bars_1h, start=bars_1h.index[250])
+    assert not any("candles of history" in n for n in enough.notes)
+

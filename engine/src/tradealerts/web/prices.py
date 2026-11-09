@@ -10,9 +10,10 @@ from ..workspace import Workspace
 from .common import err
 
 
-def load_period(ctx, ws: Workspace, s, body: dict, end_at: pd.Timestamp | None = None):
+def load_period(ctx, ws: Workspace, s, body: dict, end_at: pd.Timestamp | None = None, warmup: int | None = None):
     """Prices for a test: (candles, finer candles, test start, notes). Uses the request's
-    ``years`` or ``start``/``end``; ``end_at`` cuts the data off (e.g. when a forward test began)."""
+    ``years`` or ``start``/``end``; ``end_at`` cuts the data off (e.g. when a forward test began).
+    ``warmup`` overrides the candles loaded before the test period (default: what ``s`` needs)."""
     c = ws.config()
     m = s.market
     now = pd.Timestamp.now(tz="UTC")
@@ -36,7 +37,7 @@ def load_period(ctx, ws: Workspace, s, body: dict, end_at: pd.Timestamp | None =
     if test_start is not None and end is not None and test_start >= end:
         err(422, "The start date must be before the end date")
     if test_start is not None:
-        lookback = max(1, (now - test_start).days) + warmup_days(m.timeframe)
+        lookback = max(1, (now - test_start).days) + warmup_days(m.timeframe, warmup or s.warmup_candles)
     provider = data_mod.provider_for(c, m.provider, m.tz)
     try:
         source = c.data.get("source") if m.provider == "auto" else m.provider

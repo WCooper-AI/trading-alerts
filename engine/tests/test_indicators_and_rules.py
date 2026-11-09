@@ -32,6 +32,33 @@ def test_no_lookahead(name):
         pd.testing.assert_series_equal(part, full.iloc[: cut + 1], check_names=False, rtol=1e-9)
 
 
+
+@pytest.mark.parametrize("name", sorted(n for n in CASES if not n.startswith("opening_range")))
+def test_lookback_covers_warm_up(name):
+    """After ``lookback`` candles an indicator is known and close to its value with longer history."""
+    df = synthetic_bars(days=12, freq="15min", seed=11)
+    lb = indicators.lookback(name, CASES[name])
+    full = indicators.compute(df, name, **CASES[name])
+    for start in (100, 400):
+        part = indicators.compute(df.iloc[start:], name, **CASES[name])
+        ready = part.iloc[lb - 1:]
+        assert ready.notna().all()
+        diff = (ready - full.iloc[start + lb - 1:]).abs()
+        assert diff.max() <= 0.1 * full.std(), name
+
+
+def test_rule_max_lookback():
+    sma = {"indicator": "sma", "period": 250, "shift": 100}
+    assert rules.max_lookback({"left": "close", "op": ">", "right": sma}) == 350
+    assert rules.max_lookback({"left": "close", "op": "crosses_above", "right": {"indicator": "sma", "period": 20}}) == 21
+    assert rules.max_lookback({"left": {"field": "close", "shift": 5}, "op": ">", "right": 1}) == 6
+    assert rules.max_lookback({"left": {"indicator": "ema", "period": 50}, "op": ">", "right": 1}) == 150
+    nested = {"all": [{"weekdays": ["mon"]}, {"not": {"any": [
+        {"left": {"indicator": "rsi"}, "op": "<", "right": 30},
+        {"left": "close", "op": ">", "right": {"indicator": "highest", "period": 80, "shift": 1}}]}}]}
+    assert rules.max_lookback(nested) == max(6 * 14 + 1, 81)
+
+
 def test_sma_and_highest_values():
     df = make_bars([(1, 2, 0, 1), (2, 3, 1, 2), (3, 6, 2, 3), (4, 5, 3, 4)])
     assert indicators.sma(df, 2).tolist()[1:] == [1.5, 2.5, 3.5]

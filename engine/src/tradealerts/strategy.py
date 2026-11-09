@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from . import rules, timeframes
+from . import indicators, rules, timeframes
 
 CURRENCY_SYMBOLS = {"GBP": "£", "USD": "$", "EUR": "€"}
 
@@ -119,6 +119,24 @@ class Strategy:
         if "level" in spec:
             return rules.compile_operand(spec["level"], f"{path}.level")
         return None
+
+    @property
+    def lookback_candles(self) -> int:
+        """Candles of history the rules, stop and target need before all their values are known."""
+        need = max(rules.max_lookback(self.entry_spec), rules.max_lookback(self.exit_spec))
+        for spec in (self.stop_spec, self.target_spec):
+            if spec and "atr" in spec:
+                need = max(need, indicators.lookback("atr", {"period": int(spec.get("atr_period", 14))}))
+            if spec and "level" in spec:
+                need = max(need, rules.max_lookback(spec["level"]))
+        return need
+
+    @property
+    def warmup_candles(self) -> int:
+        """Candles to load before a test period so every indicator is ready on its first candle."""
+        from .backtest import WARMUP_CANDLES
+
+        return max(WARMUP_CANDLES, self.lookback_candles)
 
     def prepare(self, df: pd.DataFrame) -> Prepared:
         ctx = rules.Context(df)

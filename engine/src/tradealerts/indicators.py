@@ -229,3 +229,37 @@ def compute(df: pd.DataFrame, name: str, **params) -> pd.Series:
             f"Its parameters are: {', '.join(allowed) or 'none'}"
         )
     return REGISTRY[name](df, **params)
+
+
+# Smoothed indicators start from a guess and take a while to settle. Measured on sample
+# prices: an EMA is within a fraction of a percent after 3 periods; Wilder's smoothing
+# (RSI, ATR) is slower, and RSI can still be several points off after 3, so it gets 6.
+SETTLE_EMA = 3
+SETTLE_WILDER = 6
+
+
+def lookback(name: str, params: dict | None = None) -> int:
+    """Candles of history ``name`` needs before its values can be trusted."""
+    p = {**params_for(name), **(params or {})}
+
+    def n(key: str) -> int:
+        return _period(p[key], key)
+
+    if name in ("sma", "zscore", "bollinger_upper", "bollinger_lower", "highest", "lowest",
+                "pct_from_high", "pct_from_low"):
+        return n("period")
+    if name in ("pct_change", "volatility"):
+        return n("period") + 1
+    if name == "ema":
+        return SETTLE_EMA * n("period")
+    if name in ("rsi", "atr", "atr_pct"):
+        return SETTLE_WILDER * n("period") + 1  # first value needs the previous close
+    if name == "macd":
+        return SETTLE_EMA * max(n("fast"), n("slow"))
+    if name in ("macd_signal", "macd_hist"):
+        return SETTLE_EMA * (max(n("fast"), n("slow")) + n("signal"))
+    if name in ("keltner_upper", "keltner_lower"):
+        return max(SETTLE_EMA * n("period"), SETTLE_WILDER * n("atr_period") + 1)
+    if name == "true_range":
+        return 2
+    return 0  # opening range: built fresh each day

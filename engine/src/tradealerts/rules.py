@@ -299,6 +299,22 @@ def _check_tz(tz, path: str) -> None:
         raise RuleError(f"unknown time zone {tz!r}; use a name like Europe/London or America/New_York", path) from None
 
 
+def max_lookback(spec: Any) -> int:
+    """Candles of history a condition (or operand) needs before every part of it is known."""
+    if isinstance(spec, list):
+        return max((max_lookback(x) for x in spec), default=0)
+    if not isinstance(spec, dict):
+        return 0
+    if "indicator" in spec or "field" in spec:
+        params = {k: v for k, v in spec.items() if k not in ("indicator", "field", *_OPERAND_MODIFIERS)}
+        base = indicators.lookback(spec["indicator"], params) if "indicator" in spec else 1
+        return base + int(spec.get("shift", 0) or 0)
+    if {"left", "op", "right"} <= set(spec):
+        crosses = 1 if spec["op"] in ("crosses_above", "crosses_below") else 0
+        return max(max_lookback(spec["left"]), max_lookback(spec["right"]), 1) + crosses
+    return max((max_lookback(v) for k, v in spec.items() if k in ("all", "any", "not")), default=0)
+
+
 def evaluate(spec_or_evaluator, df: pd.DataFrame, ctx: Context | None = None) -> Series:
     """True where the condition holds. Unknown (e.g. indicators still warming up) counts as false."""
     fn = spec_or_evaluator if callable(spec_or_evaluator) else compile_condition(spec_or_evaluator)

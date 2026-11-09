@@ -45,13 +45,13 @@ def spreads_for(strategy: Strategy, df: pd.DataFrame) -> np.ndarray | None:
     return None
 
 
-WARMUP_CANDLES = 300  # history loaded before the test period so indicators are ready on day one
+WARMUP_CANDLES = 300  # least history loaded before the test period (Strategy.warmup_candles may ask for more)
 
 
-def warmup_days(timeframe: str) -> int:
+def warmup_days(timeframe: str, candles: int = WARMUP_CANDLES) -> int:
     bar = timeframes.to_timedelta(timeframe)
-    # calendar days covering WARMUP_CANDLES, with room for nights, weekends and holidays
-    span = bar * WARMUP_CANDLES * 1.5
+    # calendar days covering ``candles``, with room for nights, weekends and holidays
+    span = bar * candles * 1.5
     return max(30, int(span / pd.Timedelta(days=1)) + 1)
 
 
@@ -107,6 +107,12 @@ def run_backtest(strategy: Strategy, df: pd.DataFrame, fine: pd.DataFrame | None
     metrics["used_finer_candles"] = fine is not None and not fine.empty
 
     all_notes = list(notes or [])
+    need = strategy.lookback_candles
+    if start is not None and first < need:
+        all_notes.append(
+            f"Your rules need {need} candles of history before they can be checked, but the price data "
+            f"only has {first} before the test period, so trades may be missing near the start."
+        )
     jumps = find_jumps(period, strategy.market.timeframe)
     if len(jumps):
         worst = jumps["gap"].idxmax()

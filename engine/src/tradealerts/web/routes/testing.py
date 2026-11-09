@@ -9,7 +9,7 @@ from fastapi import APIRouter, Body, Depends, Request
 from ... import compute
 from ...jobs import Busy
 from ...recipes import RecipeError, build_strategy
-from ...strategy import read_raw
+from ...strategy import read_raw, strategy_from_dict
 from ...workspace import Workspace
 from ..common import CURRENCY_SYMBOLS, ctx_of, err, workspace
 from ..prices import load_period
@@ -95,7 +95,13 @@ def sweep_settings(request: Request, body: dict = Body(...), ws: Workspace = Dep
         if not isinstance(v, (int, float, str, bool)):
             err(422, "Values must be numbers or options")
     variants = sweep_variants(body["data"], body.get("setting") or {}, values)
-    df, fine, test_start, notes = load_period(ctx_of(request), ws, s, body)
+    warmup = s.warmup_candles  # enough history for the variant with the longest indicators
+    for _, d in variants:
+        try:
+            warmup = max(warmup, strategy_from_dict(copy.deepcopy(d)).warmup_candles)
+        except Exception:  # an invalid variant is reported by the sweep itself
+            pass
+    df, fine, test_start, notes = load_period(ctx_of(request), ws, s, body, warmup=warmup)
     return _run(request, ws, compute.sweep, variants, df, fine, test_start, s.risk.symbol, notes)
 
 

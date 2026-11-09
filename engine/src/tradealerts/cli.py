@@ -134,7 +134,7 @@ def cmd_backtest(args) -> int:
     else:
         if args.years:
             from .backtest import warmup_days
-            s.market.lookback_days = int(args.years * 365.25) + warmup_days(s.market.timeframe)
+            s.market.lookback_days = int(args.years * 365.25) + warmup_days(s.market.timeframe, s.warmup_candles)
         df, fine = load_market_data(cfg, s)
         notes = data_mod.data_notes(s.market.symbol, s.market.provider, cfg.data)
     start = None
