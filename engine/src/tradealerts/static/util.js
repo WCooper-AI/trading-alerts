@@ -73,7 +73,9 @@ function toast(text, bad = false) {
 
 // --------------------------------------------------------------------- API
 
-class ApiError extends Error {}
+class ApiError extends Error {
+  constructor(message, status = 0, code = null) { super(message); this.status = status; this.code = code; }
+}
 async function api(method, path, body, { timeout = 0 } = {}) {
   const opts = { method, headers: { "X-Requested-With": "tradealerts" }, credentials: "same-origin" };
   if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
@@ -94,8 +96,10 @@ async function api(method, path, body, { timeout = 0 } = {}) {
   if (res.status === 401 && path !== "/login") { showLogin(); throw new ApiError("Sign in to continue"); }
   if (!res.ok) {
     let msg = data && data.detail;
+    let code = null;
     if (Array.isArray(msg)) msg = msg.map((d) => d.msg).join("; ");
-    throw new ApiError(msg || `Request failed (${res.status})`);
+    else if (msg && typeof msg === "object") { code = msg.code || null; msg = msg.message; }
+    throw new ApiError(msg || `Request failed (${res.status})`, res.status, code);
   }
   return data;
 }
@@ -122,6 +126,25 @@ function ask(message, { ok = "OK", cancel = "Cancel", danger = false, title = nu
     document.body.appendChild(dlg);
     dlg.showModal();
     (danger ? no : yes).focus();
+  });
+}
+
+/** Ask the user to pick one of several options. Resolves to the chosen option's key, or null if cancelled.
+    options: [{ key, label, detail?, primary? }] */
+function choose(message, options, { title = null, cancel = "Cancel" } = {}) {
+  return new Promise((resolve) => {
+    let answer = null;
+    const dlg = h("dialog", { class: "ask-dialog choose-dialog", "aria-label": title || message });
+    const buttons = options.map((o) => h("button", { type: "button", class: "choice" + (o.primary ? " primary" : ""),
+      onclick: () => { answer = o.key; dlg.close(); } },
+      h("strong", {}, o.label), o.detail ? h("span", { class: "small" }, o.detail) : null));
+    const no = h("button", { type: "button", class: "quiet", onclick: () => dlg.close() }, cancel);
+    append(dlg, [title ? h("h2", {}, title) : null, h("p", {}, message), h("div", { class: "choices" }, buttons),
+      h("div", { class: "save-row" }, no)]);
+    dlg.addEventListener("close", () => { dlg.remove(); resolve(answer); });
+    document.body.appendChild(dlg);
+    dlg.showModal();
+    buttons[0].focus();
   });
 }
 

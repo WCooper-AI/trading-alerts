@@ -355,8 +355,9 @@ async function viewSimple(id, data, run) {
     clearTimeout(timer);
     if (!(await rebuildNow())) { toast("Fix the highlighted setting first", true); return false; }
     try {
-      await PUT("/strategies/" + encodeURIComponent(id), { data });
-      dirty = false; dirtyNote.textContent = "Saved"; toast("Changes saved"); refreshStatus();
+      const r = await withRunningChoice((onRunning) => PUT("/strategies/" + encodeURIComponent(id), { data, on_running: onRunning }));
+      if (!r) return false;
+      dirty = false; dirtyNote.textContent = "Saved"; savedToast(r); refreshStatus();
       return true;
     } catch (e) { toast("Not saved: " + e.message, true); return false; }
   }
@@ -396,6 +397,7 @@ async function viewSimple(id, data, run) {
           toast("Copy saved as a draft"); app.guard = null; app.isDirty = null;
           location.hash = "#/s/" + r.id;
         } }, "Duplicate"),
+        historyLink(id),
         ...shareButtons(id, () => data),
         h("button", { class: "danger", type: "button", onclick: async () => {
           if (!(await ask(`Delete "${data.name}"?`, { ok: "Delete", danger: true }))) return;

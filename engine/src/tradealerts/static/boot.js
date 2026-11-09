@@ -137,6 +137,7 @@ async function route() {
       if (rec.data.recipe && parts[2] !== "advanced") await viewSimple(parts[1], rec.data, rec.run);
       else await viewEditor(parts[1], null, rec.data, rec.run);
     }
+    else if (parts[0] === "history" && parts[1]) await viewHistory(parts[1]);
     else if (parts[0] === "create") await viewCreate(parts[1]);
     else if (parts[0] === "new") { app.guard = null; await viewEditor(null, parts[1]); }
     else if (parts[0] === "strategies") await viewStrategies();

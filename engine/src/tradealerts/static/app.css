@@ -1258,3 +1258,30 @@ input[type="number"]::-webkit-outer-spin-button, input[type="number"]::-webkit-i
 .plan-box { display: grid; gap: .6rem; padding: 1rem; border-radius: 14px; border: 1px solid var(--line-soft); }
 .plan-box .price { font-size: 1.6rem; font-weight: 650; }
 .account-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
+
+/* ================================================================== history */
+.history { display: grid; grid-template-columns: minmax(14rem, 18rem) 1fr; gap: 1rem; align-items: start; }
+.version-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .25rem; }
+.version-item { width: 100%; display: flex; justify-content: flex-start; flex-wrap: wrap; align-items: baseline; gap: .1rem .4rem; text-align: left;
+  background: transparent; border: 0; border-radius: var(--radius); padding: .55rem .7rem; box-shadow: none; color: var(--ink); }
+.version-item .small { flex-basis: 100%; }
+.version-item:hover { background: var(--accent-soft); }
+.version-list li.selected .version-item { background: var(--lens); box-shadow: var(--lens-shadow); }
+.version-no { font-weight: 650; font-variant-numeric: tabular-nums; }
+.history-detail .segmented { margin: .9rem 0 .6rem; }
+.history-detail .sentence { font-size: var(--step-1); line-height: 1.45; }
+.diff { font-size: .85rem; border: 1px solid var(--line); border-radius: var(--radius); overflow-x: auto; background: var(--chart-bg); }
+.diff-line { display: grid; grid-template-columns: 1.5rem 1fr; }
+.diff-line code { white-space: pre; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: .05rem .5rem .05rem 0; }
+.diff-sign { text-align: center; color: var(--muted); user-select: none; }
+.diff-line.add { background: color-mix(in srgb, var(--gain) 13%, transparent); }
+.diff-line.add .diff-sign { color: var(--gain); font-weight: 700; }
+.diff-line.del { background: color-mix(in srgb, var(--loss) 12%, transparent); }
+.diff-line.del .diff-sign { color: var(--loss); font-weight: 700; }
+.diff-gap { padding: .25rem .5rem; color: var(--muted); font-size: .78rem; border-block: 1px dashed var(--line-soft); }
+.choose-dialog { max-width: 34rem; }
+.choose-dialog .choices { display: grid; gap: .5rem; }
+.choose-dialog .choice { display: grid; gap: .2rem; text-align: left; padding: .75rem .9rem; border-radius: var(--radius); height: auto; white-space: normal; }
+.choose-dialog .choice .small { font-weight: 400; opacity: .85; }
+@media (max-width: 760px) { .history { grid-template-columns: 1fr; } }
+

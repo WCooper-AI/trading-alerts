@@ -167,6 +167,35 @@ function stillToChoose(d) {
   return out;
 }
 
+/** Run a save (or restore) of a strategy. If its trading rules changed while a forward test is running,
+    the server asks first: let the user choose, then send it again with that choice.
+    ``send(onRunning)`` makes the request. Resolves to its result, or null if the user cancelled. */
+async function withRunningChoice(send, { message = "This strategy has a forward test running, and you've changed its trading rules.",
+  cancel = "Don't save" } = {}) {
+  try { return await send(undefined); }
+  catch (e) {
+    if (e.code !== "running_test") throw e;
+    const pick = await choose(message, [
+      { key: "keep", primary: true, label: "Keep the forward test running with the new rules",
+        detail: "Results so far stay. The new rules apply from the next candle, and the test's history notes the change." },
+      { key: "restart", label: "Finish it and start a fresh forward test",
+        detail: "The current test is kept under Finished forward tests with its results. A new one starts with the new rules." },
+    ], { title: "What should happen to the forward test?", cancel });
+    if (!pick) return null;
+    return send(pick);
+  }
+}
+
+function savedToast(r) {
+  toast(r.forward_test === "restarted" ? "Changes saved. A fresh forward test has started"
+    : r.forward_test === "kept" ? "Changes saved. The forward test uses the new rules from the next candle"
+    : "Changes saved");
+}
+
+function historyLink(id) {
+  return h("a", { class: "button quiet", href: "#/history/" + encodeURIComponent(id), title: "Earlier versions of this strategy" }, "History");
+}
+
 async function viewEditor(id, exampleName, preloaded, run) {
   setNav("strategies");
   let data, isNew = !id;
@@ -239,10 +268,12 @@ async function viewEditor(id, exampleName, preloaded, run) {
         app.isDirty = null;
         location.replace("#/s/" + r.id);
       } else {
-        await PUT("/strategies/" + encodeURIComponent(id), { data: exportData() });
+        const r = await withRunningChoice((onRunning) =>
+          PUT("/strategies/" + encodeURIComponent(id), { data: exportData(), on_running: onRunning }));
+        if (!r) return false;
         dirty = false;
         dirtyNote.textContent = "Saved";
-        toast("Changes saved");
+        savedToast(r);
       }
       refreshStatus();
       return true;
@@ -284,7 +315,7 @@ async function viewEditor(id, exampleName, preloaded, run) {
       h("a", { href: "#/s/" + id }, "Back to the simple view")) : null,
     title,
     h("div", { class: "row" }, h("div", { class: "inline" }, statusSeg, dirtyNote),
-      h("div", { class: "inline" }, dupBtn, isNew ? null : shareButtons(id, exportData), deleteBtn, saveBtn)),
+      h("div", { class: "inline" }, dupBtn, isNew ? null : historyLink(id), isNew ? null : shareButtons(id, exportData), deleteBtn, saveBtn)),
     summary, validity);
 
   // ----- sections

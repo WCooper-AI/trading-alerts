@@ -36,7 +36,7 @@ CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self'; script-src '
        "font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 # The interface's scripts, in load order. They share one scope (classic scripts, no build step).
 SCRIPTS = ["util.js", "describe.js", "editor.js", "strategies.js", "testing.js", "guided.js", "dashboard.js",
-           "settings.js", "widgets.js", "markets.js", "journal.js", "portfolio.js", "news.js", "compare.js", "boot.js"]
+           "settings.js", "widgets.js", "markets.js", "journal.js", "portfolio.js", "news.js", "compare.js", "history.js", "boot.js"]
 
 
 def static_version(extra_dirs=()) -> str:
