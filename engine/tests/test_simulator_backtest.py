@@ -3,7 +3,7 @@ import math
 import pandas as pd
 import pytest
 
-from tradealerts.backtest import run_backtest
+from tradealerts.backtest import compute_metrics, run_backtest
 from tradealerts.risk import position_size
 from tradealerts.simulator import Simulator
 from tradealerts.strategy import SkipTrade, StrategyError, strategy_from_dict
@@ -142,7 +142,18 @@ def test_backtest_runs_and_metrics_consistent(bars_1h):
     # one position at a time: each entry is after the previous exit
     entries = pd.to_datetime(res.trades["entry_time"])
     exits = pd.to_datetime(res.trades["exit_time"])
-    assert (entries.iloc[1:].values >= exits.iloc[:-1].values).all()
+    assert (entries.iloc[1:].to_numpy() >= exits.iloc[:-1].to_numpy()).all()
+
+
+def test_profit_factor_is_none_without_losing_trades(bars_1h):
+    s = make_strategy()
+    period = bars_1h.iloc[:10]
+    eq = pd.Series(1000.0, index=period.index)
+    wins = pd.DataFrame({"pnl": [10.0, 5.0], "r_multiple": [1.0, 0.5], "bars_held": [3, 4],
+                         "exit_reason": ["target", "target"], "funding": [0.0, 0.0], "spread_cost": [1.0, 1.0]})
+    assert compute_metrics(s, wins, eq, period, 0)["profit_factor"] is None
+    mixed = wins.assign(pnl=[10.0, -5.0])
+    assert compute_metrics(s, mixed, eq, period, 0)["profit_factor"] == pytest.approx(2.0)
 
 
 def test_backtest_signals_have_no_lookahead(bars_1h):

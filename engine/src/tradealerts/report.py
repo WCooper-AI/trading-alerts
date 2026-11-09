@@ -35,7 +35,7 @@ def summary_rows(res: BacktestResult) -> list[tuple[str, str]]:
         rows += [
             ("Win rate", f"{m['win_rate_pct']:.1f}%"),
             ("Average win / loss", f"{_money(m['avg_win'], sym)} / {_money(m['avg_loss'], sym)}"),
-            ("Profit factor", "∞" if math.isinf(pf) else f"{pf:.2f}"),
+            ("Profit factor", "No losses" if pf is None else f"{pf:.2f}"),
             ("Average trade", f"{_money(m['expectancy'], sym)} ({m['avg_r']:+.2f}R)"),
             ("Average bars held", f"{m['avg_bars_held']:.1f}"),
             ("Longest losing streak", str(m["longest_losing_streak"])),

@@ -151,7 +151,7 @@ def compute_metrics(strategy: Strategy, trades: pd.DataFrame, equity: pd.Series,
             win_rate_pct=len(wins) / len(pnl) * 100,
             avg_win=float(wins.mean()) if len(wins) else 0.0,
             avg_loss=float(losses.mean()) if len(losses) else 0.0,
-            profit_factor=float(wins.sum() / -losses.sum()) if losses.sum() < 0 else float("inf"),
+            profit_factor=float(wins.sum() / -losses.sum()) if losses.sum() < 0 else None,  # None: no losing trades
             expectancy=float(pnl.mean()),
             avg_r=float(trades["r_multiple"].mean()),
             avg_bars_held=float(trades["bars_held"].mean()),

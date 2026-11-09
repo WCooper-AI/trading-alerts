@@ -92,7 +92,8 @@ function renderCompare(results) {
     ["Worst drawdown", (m) => num(m.max_drawdown_pct, 1) + "%", (m) => m.max_drawdown_pct],
     ["Trades", (m) => String(m.trades), null],
     ["Won", (m) => (m.trades ? num(m.win_rate_pct, 0) + "%" : "–"), (m) => m.win_rate_pct],
-    ["Profit factor", (m) => (m.profit_factor === null || m.profit_factor === undefined ? "–" : num(m.profit_factor, 2)), (m) => m.profit_factor],
+    ["Profit factor", (m) => (!m.trades ? "–" : m.profit_factor === null || m.profit_factor === undefined ? "No losses" : num(m.profit_factor, 2)),
+      (m) => (m.trades && (m.profit_factor === null || m.profit_factor === undefined) ? Infinity : m.profit_factor)],
     ["Average trade", (m) => (m.avg_r === null || m.avg_r === undefined ? "–" : signed(m.avg_r, "R")), (m) => m.avg_r],
   ];
   return h("div", { class: "compare-out" },
