@@ -7,7 +7,9 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .. import rules
+from fastapi import HTTPException
+
+from .. import rules, versions
 from ..strategy import (
     ID_RE, Strategy, StrategyError, check_runtime, dump_strategy, load_strategy, read_raw, slug, strategy_files,
     strategy_from_dict,
@@ -71,6 +73,82 @@ def write(path: Path, data: dict) -> None:
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(dump_strategy(data), encoding="utf-8")
     tmp.replace(path)
+
+
+def now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def start_run(store, ws: Workspace, sid: str, s: Strategy) -> dict:
+    """Start a forward test on the strategy file as it is now, keeping a copy of it with the run."""
+    text = strategy_path(ws, sid).read_text(encoding="utf-8")
+    return store.start_run(sid, name=s.name, market=s.market.label, timeframe=s.market.timeframe,
+                           currency=s.risk.currency, start_balance=s.risk.account_size,
+                           source_hash=versions.text_hash(text), strategy_yaml=text)
+
+
+def record_version(ws: Workspace, sid: str, note: str) -> dict | None:
+    """Keep the file as a new version and say so in the activity log."""
+    with ws.store() as store:
+        v = versions.record(store, sid, strategy_path(ws, sid), note, ws.limits.max_versions)
+        if v:
+            store.add_event(sid, now_iso(), "strategy_saved", f"{note}: version {v['version_no']}", False)
+        return v
+
+
+RUNNING_CHOICES = ("keep", "restart")
+
+
+def save(ws: Workspace, sid: str, data: dict, on_running: str | None, note: str = "Saved") -> dict:
+    """Write a strategy the user saved, keep the version, and deal with its running forward test.
+
+    If the trading rules changed while a forward test is running, the user chooses: ``keep``
+    the test going under the new rules from the next candle, or ``restart`` (finish it and
+    start a fresh one). Without a choice this raises 409 so the app can ask.
+    """
+    p = strategy_path(ws, sid)
+    old_text = p.read_text(encoding="utf-8")
+    old = versions.parse(old_text)
+    if alerts_on(data) and not alerts_on(old):
+        check_running_limit(ws, sid)
+    changed = versions.rules_changed(old, data)
+    with ws.store() as store:
+        run = store.active_run(sid)
+        if run and changed and on_running not in RUNNING_CHOICES:
+            raise HTTPException(409, detail={
+                "code": "running_test", "run_id": run["id"],
+                "message": "This strategy has a forward test running. Choose what happens to it.",
+            })
+        versions.sync(store, sid, p, ws.limits.max_versions)  # keep any hand edit before overwriting it
+        write(p, data)
+        text = p.read_text(encoding="utf-8")
+        if versions.text_hash(text) == versions.text_hash(old_text):
+            v = store.latest_version(sid)
+            return {"id": sid, "version": v["version_no"] if v else None, "forward_test": None}
+        v = store.add_version(sid, versions.text_hash(text), text, note, keep=ws.limits.max_versions)
+        title = f"{note}: version {v['version_no']}"
+        outcome = None
+        if run and changed and on_running == "restart":
+            store.stop_run(sid)
+            run = start_run(store, ws, sid, load(ws, sid))
+            store.add_event(sid, now_iso(), "strategy_saved",
+                            f"{title}\nThe last forward test was finished and this one started with the new rules.",
+                            False, run["id"])
+            outcome = "restarted"
+        elif run:
+            store.set_run_snapshot(run["id"], versions.text_hash(text), text)
+            if changed:
+                store.add_event(sid, now_iso(), "strategy_saved",
+                                f"{title}\nThe new rules apply to this forward test from the next candle.",
+                                False, run["id"])
+                outcome = "kept"
+            else:
+                store.add_event(sid, now_iso(), "strategy_saved", title, False)
+        else:
+            store.add_event(sid, now_iso(), "strategy_saved", title, False)
+    return {"id": sid, "version": v["version_no"], "forward_test": outcome}
 
 
 def alerts_on(data: dict) -> bool:

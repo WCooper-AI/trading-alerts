@@ -20,7 +20,9 @@ from ..common import (
     INDICATOR_LABELS, INDICATOR_SHORT, MARKET_PRESETS, TIMEFRAMES, TIMEZONES, clean, ctx_of, err, workspace,
 )
 from ..runs_view import run_series, run_summary
-from ..strategy_io import alerts_on, check_running_limit, save_new, strategy_path, validate, write
+from ... import versions
+from ..strategy_io import (alerts_on, check_running_limit, record_version, save, save_new, strategy_path, validate,
+                          write)
 
 TEMPLATES = resources.files("tradealerts") / "templates"
 
@@ -117,6 +119,8 @@ def list_strategies(ws: Workspace = Depends(workspace)):
             except Exception as exc:
                 item.setdefault("data", {})
                 item["error"] = str(exc)
+            if store:
+                versions.sync(store, sid, path, ws.limits.max_versions)
             run = store.active_run(sid) if store else None
             item["live"] = {"run": run_summary(store, run, with_series=False)} if run else {}
             if run:
@@ -137,11 +141,14 @@ def get_strategy(sid: str, ws: Workspace = Depends(workspace)):
     except StrategyError as exc:
         problem = str(exc)
     run = None
+    version = None
     with ws.store(create=False) as store:
         if store is not None:
+            v = versions.sync(store, sid, p, ws.limits.max_versions)
+            version = v["version_no"] if v else None
             active = store.active_run(sid)
             run = run_summary(store, active, with_series=False) if active else None
-    return clean({"id": sid, "file": p.name, "data": data, "error": problem, "run": run})
+    return clean({"id": sid, "file": p.name, "data": data, "error": problem, "run": run, "version": version})
 
 
 @router.post("/api/validate")
@@ -160,6 +167,7 @@ def create_strategy(request: Request, body: dict = Body(...), ws: Workspace = De
     if alerts_on(data):
         check_running_limit(ws, "")
     sid = save_new(ws, data)
+    record_version(ws, sid, "Created")
     if alerts_on(data):
         ctx_of(request).wake(ws)
     return {"id": sid}
@@ -197,21 +205,63 @@ def import_strategy(body: dict = Body(...), ws: Workspace = Depends(workspace)):
     data["name"] = str(data.get("name") or "Imported strategy")[:120]
     data = tidy_recipe(data)
     validate(ws, data)
-    return {"id": save_new(ws, data)}
+    sid = save_new(ws, data)
+    record_version(ws, sid, "Imported")
+    return {"id": sid}
 
 
 @router.put("/api/strategies/{sid}")
 def save_strategy(sid: str, request: Request, body: dict = Body(...), ws: Workspace = Depends(workspace)):
+    """Save a strategy. ``on_running`` (keep / restart) says what happens to a running forward
+    test when the trading rules changed; without it the app is asked to choose (409)."""
     p = strategy_path(ws, sid)
     data = tidy_recipe(body.get("data"))
     validate(ws, data, sid)
     was_on = alerts_on(read_raw(p))
-    if alerts_on(data) and not was_on:
-        check_running_limit(ws, sid)
-    write(p, data)
-    if alerts_on(data) and not was_on:
+    out = save(ws, sid, data, body.get("on_running"))
+    if (alerts_on(data) and not was_on) or out["forward_test"] == "restarted":
         ctx_of(request).wake(ws)  # start its forward test now rather than at the next check
-    return {"id": sid}
+    return out
+
+
+@router.get("/api/strategies/{sid}/versions")
+def strategy_versions(sid: str, ws: Workspace = Depends(workspace)):
+    p = strategy_path(ws, sid)
+    with ws.store() as store:
+        current = versions.sync(store, sid, p, ws.limits.max_versions)
+        return clean({"versions": store.versions(sid), "current": current["version_no"] if current else None,
+                      "kept": ws.limits.max_versions})
+
+
+@router.get("/api/strategies/{sid}/versions/{no}")
+def strategy_version(sid: str, no: int, ws: Workspace = Depends(workspace)):
+    strategy_path(ws, sid)
+    with ws.store(create=False) as store:
+        v = store.version(sid, no) if store else None
+    if not v:
+        err(404, "That version isn't kept any more")
+    return clean({**v, "data": versions.parse(v["yaml"])})
+
+
+@router.post("/api/strategies/{sid}/versions/{no}/restore")
+def restore_version(sid: str, no: int, request: Request, body: dict = Body(default={}), ws: Workspace = Depends(workspace)):
+    """Make an old version current again. It's saved as a new version, so nothing is lost."""
+    p = strategy_path(ws, sid)
+    with ws.store(create=False) as store:
+        v = store.version(sid, no) if store else None
+    if not v:
+        err(404, "That version isn't kept any more")
+    data = versions.parse(v["yaml"])
+    current = read_raw(p)
+    for k in ("template", "enabled"):  # alerts stay as they are now
+        data.pop(k, None)
+        if k in current:
+            data[k] = current[k]
+    validate(ws, data, sid)
+    out = save(ws, sid, data, body.get("on_running"), note=f"Restored version {no}")
+    if out["forward_test"] == "restarted":
+        ctx_of(request).wake(ws)
+    return out
 
 
 @router.delete("/api/strategies/{sid}")
@@ -225,6 +275,7 @@ def delete_strategy(sid: str, ws: Workspace = Depends(workspace)):
         if store is not None:
             store.stop_run(sid)
             store.reset(sid)
+            store.delete_versions(sid)  # forward tests keep their own copy of the rules they ran on
     return {"deleted": sid}
 
 

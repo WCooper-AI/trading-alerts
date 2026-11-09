@@ -29,6 +29,7 @@ class Limits:
     max_price_alerts: int | None = None
     max_uploads: int | None = None
     max_upload_mb: float = 50
+    max_versions: int | None = None       # saved versions kept per strategy (None: all)
     min_poll_minutes: float = 1
     sources: tuple[str, ...] = ("dukascopy", "yahoo", "oanda")
     console_notifier: bool = True           # "print alerts in the server log" makes no sense on a shared server

@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, Request
 
-from ... import compute
+from ... import compute, versions
 from ...jobs import Busy
 from ...strategy import read_raw, strategy_files
 from ...workspace import Workspace
 from ..common import clean, ctx_of, err, utc, workspace
 from ..prices import load_period
 from ..runs_view import run_health, run_series, run_summary
-from ..strategy_io import alerts_on, check_running_limit, load, strategy_path, write
+from ..strategy_io import alerts_on, check_running_limit, load, start_run, strategy_path, validate, write
 
 router = APIRouter()
 
@@ -22,8 +22,7 @@ def start_forward_test(sid: str, request: Request, ws: Workspace = Depends(works
     s = load(ws, sid)
     check_running_limit(ws, sid)
     with ws.store() as store:
-        run = store.start_run(sid, name=s.name, market=s.market.label, timeframe=s.market.timeframe,
-                              currency=s.risk.currency, start_balance=s.risk.account_size)
+        run = start_run(store, ws, sid, s)
     ctx_of(request).wake(ws)
     return clean(run)
 
@@ -100,10 +99,15 @@ def run_backtest_range(run_id: int, request: Request, body: dict = Body(default=
         if not run:
             err(404, "No forward test with that id")
         eq = store.equity(run_id)
-    if run["strategy_id"] not in strategy_files(ws.config().strategies_dir):
-        err(404, "The strategy for this forward test has been deleted")
-    s = load(ws, run["strategy_id"])
-    data = read_raw(strategy_path(ws, run["strategy_id"]))
+    if run.get("strategy_yaml"):
+        # the rules this forward test ran on, even if the strategy was edited or deleted since
+        data = versions.parse(run["strategy_yaml"])
+        s = validate(ws, data, run["strategy_id"])
+    else:  # forward tests started before 0.3 kept no copy
+        if run["strategy_id"] not in strategy_files(ws.config().strategies_dir):
+            err(404, "The strategy for this forward test has been deleted")
+        s = load(ws, run["strategy_id"])
+        data = read_raw(strategy_path(ws, run["strategy_id"]))
     df, fine, test_start, notes = load_period(ctx, ws, s, body, end_at=utc(run["started_at"]))
     current = eq[-1][1] if eq else run["start_balance"]
     series = run_series(run, eq, current, 160)

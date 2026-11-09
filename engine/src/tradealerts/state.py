@@ -24,7 +24,9 @@ CREATE TABLE IF NOT EXISTS runs (
     currency TEXT,
     start_balance REAL NOT NULL,
     started_at TEXT NOT NULL,
-    stopped_at TEXT
+    stopped_at TEXT,
+    source_hash TEXT,
+    strategy_yaml TEXT
 );
 CREATE TABLE IF NOT EXISTS paper_trades (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,6 +92,19 @@ CREATE TABLE IF NOT EXISTS news_notes (
     alert_minutes INTEGER,
     alerted_at TEXT
 );
+CREATE TABLE IF NOT EXISTS strategy_versions (
+    strategy_id TEXT NOT NULL,
+    version_no INTEGER NOT NULL,
+    hash TEXT NOT NULL,
+    yaml TEXT NOT NULL,
+    saved_at TEXT NOT NULL,
+    note TEXT,
+    PRIMARY KEY (strategy_id, version_no)
+);
+CREATE TABLE IF NOT EXISTS settings_kv (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_runs_strategy ON runs (strategy_id, stopped_at);
 CREATE INDEX IF NOT EXISTS idx_trades_run ON paper_trades (run_id);
 """
@@ -117,7 +132,8 @@ class StateStore:
     def _migrate(self) -> None:
         """Add columns introduced after a database was first created."""
         for table, col, kind in (("paper_trades", "run_id", "INTEGER"), ("events", "run_id", "INTEGER"),
-                                 ("paper_trades", "funding", "REAL"), ("paper_trades", "spread_cost", "REAL")):
+                                 ("paper_trades", "funding", "REAL"), ("paper_trades", "spread_cost", "REAL"),
+                                 ("runs", "source_hash", "TEXT"), ("runs", "strategy_yaml", "TEXT")):
             cols = [r[1] for r in self.db.execute(f"PRAGMA table_info({table})")]
             if cols and col not in cols:
                 self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {kind}")
@@ -170,15 +186,20 @@ class StateStore:
             "SELECT * FROM runs WHERE stopped_at IS NULL ORDER BY id")}
 
     def start_run(self, strategy_id: str, *, name: str, market: str, timeframe: str, currency: str,
-                  start_balance: float, started_at: str | None = None, keep_state: bool = False) -> dict:
-        """Start a new forward test. Any running one for the strategy is finished first."""
+                  start_balance: float, started_at: str | None = None, keep_state: bool = False,
+                  source_hash: str = "", strategy_yaml: str = "") -> dict:
+        """Start a new forward test. Any running one for the strategy is finished first.
+
+        ``source_hash`` and ``strategy_yaml`` are the strategy file it runs on, kept with the run
+        so it can be re-tested later even if the strategy is edited or deleted."""
         self.stop_run(strategy_id, stopped_at=started_at)
         if not keep_state:
             self.db.execute("DELETE FROM strategy_state WHERE strategy_id = ?", (strategy_id,))
         cur = self.db.execute(
-            "INSERT INTO runs (strategy_id, name, market, timeframe, currency, start_balance, started_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (strategy_id, name, market, timeframe, currency, start_balance, started_at or _now()),
+            "INSERT INTO runs (strategy_id, name, market, timeframe, currency, start_balance, started_at, "
+            "source_hash, strategy_yaml) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (strategy_id, name, market, timeframe, currency, start_balance, started_at or _now(),
+             source_hash or None, strategy_yaml or None),
         )
         self.db.commit()
         return self.run(cur.lastrowid)
@@ -191,6 +212,11 @@ class StateStore:
         self.db.execute("DELETE FROM strategy_state WHERE strategy_id = ?", (strategy_id,))
         self.db.commit()
         return self.run(run["id"])
+
+    def set_run_snapshot(self, run_id: int, source_hash: str, strategy_yaml: str) -> None:
+        self.db.execute("UPDATE runs SET source_hash = ?, strategy_yaml = ? WHERE id = ?",
+                        (source_hash, strategy_yaml, run_id))
+        self.db.commit()
 
     def run(self, run_id: int) -> dict | None:
         row = self.db.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
@@ -347,7 +373,8 @@ class StateStore:
 
     # ------------------------------------------------------------------ restore
 
-    TABLES = ("strategy_state", "runs", "paper_trades", "run_equity", "events", "price_alerts", "journal", "news_notes")
+    TABLES = ("strategy_state", "runs", "paper_trades", "run_equity", "events", "price_alerts", "journal", "news_notes",
+              "strategy_versions", "settings_kv")
 
     def replace_from(self, src: str | Path) -> dict[str, int]:
         """Replace everything with the rows of another Trading Alerts database (a backup).
@@ -392,3 +419,58 @@ class StateStore:
         else:
             rows = self.db.execute("SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,))
         return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------ strategy versions
+
+    def add_version(self, strategy_id: str, hash_: str, text: str, note: str, keep: int | None = None) -> dict:
+        """Keep ``text`` as the strategy's next version, unless it's the same as the latest one.
+        With ``keep``, only that many of the newest versions are kept."""
+        latest = self.latest_version(strategy_id)
+        if latest and latest["hash"] == hash_:
+            return latest
+        no = (latest["version_no"] if latest else 0) + 1
+        self.db.execute(
+            "INSERT INTO strategy_versions (strategy_id, version_no, hash, yaml, saved_at, note) VALUES (?, ?, ?, ?, ?, ?)",
+            (strategy_id, no, hash_, text, _now(), note),
+        )
+        if keep:
+            self.db.execute("DELETE FROM strategy_versions WHERE strategy_id = ? AND version_no <= ?",
+                            (strategy_id, no - keep))
+        self.db.commit()
+        return self.version(strategy_id, no)
+
+    def latest_version(self, strategy_id: str) -> dict | None:
+        row = self.db.execute("SELECT * FROM strategy_versions WHERE strategy_id = ? ORDER BY version_no DESC LIMIT 1",
+                              (strategy_id,)).fetchone()
+        return dict(row) if row else None
+
+    def version(self, strategy_id: str, version_no: int) -> dict | None:
+        row = self.db.execute("SELECT * FROM strategy_versions WHERE strategy_id = ? AND version_no = ?",
+                              (strategy_id, version_no)).fetchone()
+        return dict(row) if row else None
+
+    def version_by_hash(self, strategy_id: str, hash_: str) -> dict | None:
+        row = self.db.execute("SELECT * FROM strategy_versions WHERE strategy_id = ? AND hash = ? "
+                              "ORDER BY version_no DESC LIMIT 1", (strategy_id, hash_)).fetchone()
+        return dict(row) if row else None
+
+    def versions(self, strategy_id: str) -> list[dict]:
+        """Newest first, without the file text."""
+        return [dict(r) for r in self.db.execute(
+            "SELECT strategy_id, version_no, hash, saved_at, note FROM strategy_versions "
+            "WHERE strategy_id = ? ORDER BY version_no DESC", (strategy_id,))]
+
+    def delete_versions(self, strategy_id: str) -> None:
+        self.db.execute("DELETE FROM strategy_versions WHERE strategy_id = ?", (strategy_id,))
+        self.db.commit()
+
+    # ------------------------------------------------------------------ small settings
+
+    def get_value(self, key: str, default: str | None = None) -> str | None:
+        row = self.db.execute("SELECT value FROM settings_kv WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else default
+
+    def set_value(self, key: str, value: str) -> None:
+        self.db.execute("INSERT INTO settings_kv (key, value) VALUES (?, ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
+        self.db.commit()

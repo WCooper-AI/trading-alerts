@@ -49,8 +49,10 @@ def run_summary(store: StateStore, run: dict, with_series: bool = True, max_poin
         peak = max(peak, v)
         worst = min(worst, (v / peak - 1) * 100 if peak else 0)
     pos = st.get("position")
+    v = store.version_by_hash(run["strategy_id"], run["source_hash"]) if run.get("source_hash") else None
     out = {
-        **run,
+        **{k: val for k, val in run.items() if k != "strategy_yaml"},
+        "version": v["version_no"] if v else None,  # which saved version of the strategy it runs on
         "active": active,
         "currency_symbol": CURRENCY_SYMBOLS.get(run.get("currency") or "GBP", ""),
         "balance": current,

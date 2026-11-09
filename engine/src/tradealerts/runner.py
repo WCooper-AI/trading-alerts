@@ -10,7 +10,7 @@ from typing import Callable
 import pandas as pd
 
 from . import data as data_mod
-from . import timeframes
+from . import timeframes, versions
 from .config import AppConfig
 from .notify import Message, Notifier, broadcast
 from .backtest import fine_lookup, spreads_for
@@ -115,6 +115,7 @@ def _utc(ts) -> pd.Timestamp:
 def ensure_run(store: StateStore, strategy: Strategy, now=None) -> dict | None:
     """The strategy's running forward test. Turning alerts on starts one automatically."""
     run = store.active_run(strategy.id)
+    text = _file_text(strategy)
     if run is None and is_live(strategy):
         rec = store.load(strategy.id)
         run = store.start_run(
@@ -122,8 +123,21 @@ def ensure_run(store: StateStore, strategy: Strategy, now=None) -> dict | None:
             currency=strategy.risk.currency,
             start_balance=rec["state"]["equity"] if rec else strategy.risk.account_size,
             started_at=_utc(now).isoformat(timespec="seconds"), keep_state=rec is not None,
+            source_hash=versions.text_hash(text), strategy_yaml=text,
         )
+    elif run is not None and text:
+        versions.sync_run(store, run, text, _utc(now).isoformat(timespec="seconds"))
+        run = store.run(run["id"])
+    if run is not None and strategy.path is not None:
+        versions.sync(store, strategy.id, strategy.path)
     return run
+
+
+def _file_text(strategy: Strategy) -> str:
+    try:
+        return strategy.path.read_text(encoding="utf-8") if strategy.path else ""
+    except OSError:
+        return ""
 
 
 def process_strategy(
