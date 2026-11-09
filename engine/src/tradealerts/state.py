@@ -117,7 +117,8 @@ TRADE_COLS = [
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    # milliseconds, so "what's new since I last looked" can't miss an event from the same second
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
 class StateStore:
@@ -412,6 +413,27 @@ class StateStore:
                                     data)
                 counts[table] = len(data)
         return counts
+
+    def events_page(self, kinds: list[str] | None = None, strategy_id: str | None = None,
+                    before: str | None = None, after: str | None = None, limit: int = 50) -> list[dict]:
+        """Events newest first, optionally only some kinds, one strategy, or older than ``before``
+        / newer than ``after`` (by when they were recorded)."""
+        q, args = "SELECT * FROM events WHERE 1=1", []
+        if kinds:
+            q += f" AND kind IN ({', '.join('?' * len(kinds))})"
+            args += kinds
+        if strategy_id:
+            q += " AND strategy_id = ?"
+            args.append(strategy_id)
+        if before:
+            q += " AND created_at < ?"
+            args.append(before)
+        if after:
+            q += " AND created_at > ?"
+            args.append(after)
+        q += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        args.append(limit)
+        return [dict(r) for r in self.db.execute(q, args)]
 
     def recent_events(self, limit: int = 20, run_id: int | None = None) -> list[dict]:
         if run_id is not None:

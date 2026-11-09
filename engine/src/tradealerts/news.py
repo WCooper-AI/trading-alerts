@@ -283,7 +283,11 @@ def send_reminders(store, notifiers, now: pd.Timestamp | None = None) -> list[st
         mins = max(0, round((t - now) / pd.Timedelta(minutes=1)))
         lead = "now" if mins == 0 else f"in {mins} minute{'s' if mins != 1 else ''}"
         body = f"{r['currency']} {r['title']} is {lead} ({t:%H:%M} UTC)." + (f"\nYour note: {r['note']}" if r.get("note") else "")
-        broadcast(notifiers, Message(f"News {lead}: {r['currency']} {r['title']}", body, "high", ("newspaper",)))
+        title = f"News {lead}: {r['currency']} {r['title']}"
+        errors = broadcast(notifiers, Message(title, body, "high", ("newspaper",)))
+        if errors:
+            store.add_event("", now.isoformat(timespec="seconds"), "alert_failed",
+                            f"Alert not sent: {title}\n" + "; ".join(errors), False)
         store.mark_news_reminded(r["key"], now.isoformat(timespec="seconds"))
         sent.append(r["key"])
     return sent

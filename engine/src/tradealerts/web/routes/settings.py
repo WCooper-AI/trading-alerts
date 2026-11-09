@@ -10,6 +10,7 @@ from ... import weekly
 from ...config import ConfigError, data_settings, expand_env
 from ...notify import Message, broadcast, build_notifiers
 from ...workspace import Workspace
+from ..strategy_io import now_iso
 from ..common import (
     appearance_from_raw, checked_appearance, clean, err, raw_from_settings, settings_from_raw, workspace,
 )
@@ -30,11 +31,21 @@ def get_settings(ws: Workspace = Depends(workspace)):
     return settings_from_raw(ws.raw_config(), ws)
 
 
+SECTION_NAMES = {"poll_minutes": "how often prices are checked", "notifiers": "where alerts are sent",
+                 "report": "the weekly report", "data": "price data"}
+
+
 @router.put("/api/settings")
 def put_settings(body: dict = Body(...), ws: Workspace = Depends(workspace)):
-    new = raw_from_settings(ws.raw_config(), body, ws)
+    old = ws.raw_config()
+    new = raw_from_settings(old, body, ws)
     notifiers_for(ws, new["notifiers"], expand=True)
     ws.write_config(new)
+    changed = [name for key, name in SECTION_NAMES.items() if old.get(key) != new.get(key)]
+    if changed:
+        with ws.store() as store:
+            text = ", ".join(changed)
+            store.add_event("", now_iso(), "settings_changed", f"Settings changed\nChanged {text}.", False)
     return settings_from_raw(new, ws)
 
 

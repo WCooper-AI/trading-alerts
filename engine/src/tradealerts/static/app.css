@@ -199,7 +199,7 @@ p { margin: 0; }
   padding: .5rem .55rem .5rem 1rem; border-radius: 22px;
   background: linear-gradient(180deg, var(--sheen), transparent 60%) var(--glass-strong);
 }
-.brand { font-weight: 700; text-decoration: none; font-size: 1.04rem; display: flex; align-items: center; gap: .6rem; letter-spacing: -.01em; }
+.brand { font-weight: 700; text-decoration: none; font-size: 1.04rem; display: flex; align-items: center; gap: .6rem; letter-spacing: -.01em; white-space: nowrap; }
 .brand::before {
   content: ""; width: 1.7rem; height: 1.7rem; border-radius: .55rem; flex: none;
   background:
@@ -934,12 +934,14 @@ dialog.journal-dialog { width: min(46rem, 94vw); max-width: none; }
 .bell-panel {
   position: fixed; top: 4.9rem; right: max(1rem, calc((100vw - 1880px) / 2)); z-index: 45; width: min(24rem, calc(100vw - 2rem));
   max-height: min(70vh, 34rem); overflow: auto; border-radius: 22px; padding: .4rem;
+  display: flex; flex-direction: column;  /* the list scrolls; the heading and "All activity" stay put */
   background: linear-gradient(180deg, var(--sheen), transparent 40%) var(--glass-strong);
   -webkit-backdrop-filter: blur(var(--blur)) saturate(180%); backdrop-filter: blur(var(--blur)) saturate(180%);
   border: 1px solid var(--glass-border); box-shadow: inset 0 1px 0 var(--rim-top), var(--shadow); animation: pop .25s var(--spring) both;
 }
 .bell-head { display: flex; justify-content: space-between; align-items: center; padding: .5rem .7rem .3rem; }
-.bell-list { list-style: none; margin: 0; padding: 0; }
+.bell-panel[hidden] { display: none; }
+.bell-list { list-style: none; margin: 0; padding: 0; overflow: auto; min-height: 0; }
 .bell-list a { display: grid; grid-template-columns: 2rem 1fr; gap: .6rem; padding: .6rem .7rem; border-radius: 14px; text-decoration: none; }
 .bell-list a:hover { background: var(--glass-thin); }
 .bell-list li.unread .bell-title { font-weight: 650; }
@@ -1284,4 +1286,29 @@ input[type="number"]::-webkit-outer-spin-button, input[type="number"]::-webkit-i
 .choose-dialog .choice { display: grid; gap: .2rem; text-align: left; padding: .75rem .9rem; border-radius: var(--radius); height: auto; white-space: normal; }
 .choose-dialog .choice .small { font-weight: 400; opacity: .85; }
 @media (max-width: 760px) { .history { grid-template-columns: 1fr; } }
+
+/* ================================================================== activity */
+.activity-filters { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .6rem 1rem; align-items: center; margin-bottom: .6rem; }
+.chips { display: flex; flex-wrap: wrap; gap: .35rem; }
+.chip { padding: .3rem .75rem; border-radius: 999px; font-size: .85rem; font-weight: 560; background: var(--glass-thin); box-shadow: none; }
+.chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.activity { list-style: none; margin: 0; padding: 0; }
+.activity-item { display: grid; grid-template-columns: 8.5rem 1.6rem 1fr; gap: .2rem .6rem; align-items: baseline; padding: .6rem .4rem; border-bottom: 1px solid var(--line-soft); border-radius: 8px; }
+.activity-item:last-child { border-bottom: 0; }
+.activity-item.unread { background: var(--accent-soft); }
+.activity-time { font-size: var(--step--1); font-variant-numeric: tabular-nums; }
+.activity-icon { text-align: center; font-size: .8rem; color: var(--muted); }
+.activity-item.trade .activity-icon { color: var(--accent-text); }
+.activity-item.problem .activity-icon, .activity-item.problem .activity-title { color: var(--loss); }
+.activity-item.warn .activity-icon { color: var(--warn); }
+.activity-title { color: var(--ink); text-decoration: none; font-weight: 560; }
+.activity-title:hover { text-decoration: underline; }
+.activity .what { white-space: pre-line; margin-top: .15rem; }
+.activity-now { padding-bottom: .6rem; margin-bottom: .6rem; border-bottom: 1px solid var(--line); }
+.activity-now h2 { font-size: var(--step-0); color: var(--loss); }
+.bell-foot { padding: .4rem .7rem .6rem; display: flex; justify-content: flex-end; }
+@media (max-width: 600px) {
+  .activity-item { grid-template-columns: 1.6rem 1fr; }
+  .activity-time { grid-column: 2; order: 3; }
+}
 

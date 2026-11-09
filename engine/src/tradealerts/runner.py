@@ -205,9 +205,14 @@ def process_strategy(
                 store.add_trade(strategy.id, ev.data, run["id"])
             msg = format_event(strategy, ev, fresh=(i == last))
             notified = False
+            errors = []
             if msg and send:
-                notified = not broadcast(notifiers, msg)
+                errors = broadcast(notifiers, msg)
+                notified = not errors
             store.add_event(strategy.id, str(t), ev.kind, msg.body if msg else "", notified, run["id"])
+            if errors:
+                store.add_event(strategy.id, str(t), "alert_failed",
+                                f"Alert not sent: {msg.title}\n" + "; ".join(errors), False, run["id"])
         store.add_equity(run["id"], str(t + tf), sim.state["equity"] + sim.unrealised(c[i]))
     sim.state["mark"] = {"time": str(df.index[last] + tf), "close": float(c[last])}
     store.commit()

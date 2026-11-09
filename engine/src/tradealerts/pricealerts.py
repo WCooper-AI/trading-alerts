@@ -73,6 +73,8 @@ def check_price_alerts(cfg, store: StateStore, notifiers: list[Notifier], now=No
             errors = broadcast(notifiers, Message(f"{label} {word} {price:,.5g}", body, "high", ("bell",)))
             if errors:
                 log.warning("Price alert %s: %s", a["id"], "; ".join(errors))
+                store.add_event("", t.isoformat(), "alert_failed",
+                                f"Alert not sent: {label} {word} {price:,.5g}\n" + "; ".join(errors), False)
             # triggered_price is the latest price when it fired (the level itself is "price")
             store.update_price_alert(a["id"], active=0, triggered_at=t.isoformat(), triggered_price=last,
                                      checked_to=now.isoformat(timespec="seconds"))

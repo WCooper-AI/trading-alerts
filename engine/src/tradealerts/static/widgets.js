@@ -56,7 +56,7 @@ async function openPalette() {
   const go = (hash) => () => { location.hash = hash; };
   const base = [
     ["Page", "Dashboard", go("#/")], ["Page", "Markets", go("#/markets")], ["Page", "Strategies", go("#/strategies")],
-    ["Page", "News", go("#/news")], ["Page", "Journal", go("#/journal")], ["Page", "Settings", go("#/settings")],
+    ["Page", "News", go("#/news")], ["Page", "Activity", go("#/activity")], ["Page", "Journal", go("#/journal")], ["Page", "Settings", go("#/settings")],
     ["Action", "Create a strategy", go("#/create")], ["Action", "Build a strategy from scratch", go("#/new")],
     ["Action", "Test strategies together", go("#/portfolio")], ["Action", "Compare backtests side by side", go("#/compare")],
     ["Action", "Add a journal trade", () => { location.hash = "#/journal"; setTimeout(() => journalDialog(null, viewJournal), 400); }],
@@ -105,15 +105,18 @@ document.getElementById("palette-btn").addEventListener("click", () => openPalet
 window.addEventListener("hashchange", () => { paletteCache = null; });
 
 // --------------------------------------------------------------------- notifications bell
+// A short view of the activity log. What counts as unread is kept on the server, so the
+// browser and the desktop app agree.
 
-const BELL_ICON = { closed: "✓", opened: "↗", signal: "◆", skipped: "!", price: "◎", news: "🗓", error: "!" };
+const BELL_ICON = { closed: "✓", opened: "↗", signal: "◆", skipped: "!", price: "◎", news: "🗓", error: "!",
+  strategy_saved: "✎", settings_changed: "⚙", alert_failed: "!" };
 async function refreshBell(open = false) {
   const btn = document.getElementById("bell");
   const panel = document.getElementById("bell-panel");
-  let items;
-  try { items = (await GET("/notifications")).items; } catch (_) { return; }
-  const seen = pref("ta-bell-seen", "");
-  const unread = items.filter((x) => String(x.time) > seen).length;
+  let res;
+  try { res = await GET("/activity?limit=12"); } catch (_) { return; }
+  const items = res.now.concat(res.items);
+  const unread = res.unread_count;
   const badge = btn.querySelector(".badge");
   badge.hidden = !unread;
   badge.textContent = unread > 9 ? "9+" : String(unread);
@@ -122,15 +125,18 @@ async function refreshBell(open = false) {
   clear(panel);
   append(panel, [h("div", { class: "bell-head" }, h("strong", {}, "Notifications"),
     h("button", { type: "button", class: "quiet", onclick: () => { panel.hidden = true; } }, "Close")),
-  items.length ? h("ul", { class: "bell-list" }, items.map((x) => h("li", { class: String(x.time) > seen ? "unread" : "" },
+  items.length ? h("ul", { class: "bell-list" }, items.map((x) => h("li", { class: x.unread ? "unread" : "" },
     h("a", { href: x.link, onclick: () => { panel.hidden = true; } },
       h("span", { class: "bell-icon " + x.kind }, BELL_ICON[x.kind] || "•"),
-      h("span", {}, h("span", { class: "bell-title" }, x.title), x.body ? h("span", { class: "small muted bell-body" }, x.body) : null,
+      h("span", {}, h("span", { class: "bell-title" }, x.title), x.body ? h("span", { class: "small muted bell-body" }, x.body.split("\n")[0]) : null,
         h("span", { class: "small muted" }, when(x.time)))))))
-    : h("p", { class: "muted small bell-empty" }, "Nothing yet. Signals, trades, price alerts and news reminders show up here.")]);
+    : h("p", { class: "muted small bell-empty" }, "Nothing yet. Signals, trades, price alerts and news reminders show up here."),
+  h("div", { class: "bell-foot" }, h("a", { class: "button small", href: "#/activity", onclick: () => { panel.hidden = true; } }, "All activity"))]);
   panel.hidden = false;
-  if (items.length) savePref("ta-bell-seen", String(items[0].time));
-  badge.hidden = true;
+  if (unread) {
+    badge.hidden = true;
+    try { await POST("/activity/seen"); } catch (_) { /* counted as read next time */ }
+  }
 }
 document.getElementById("bell").addEventListener("click", (e) => {
   e.stopPropagation();

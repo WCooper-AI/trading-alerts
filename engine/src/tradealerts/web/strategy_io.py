@@ -94,7 +94,7 @@ def record_version(ws: Workspace, sid: str, note: str) -> dict | None:
     with ws.store() as store:
         v = versions.record(store, sid, strategy_path(ws, sid), note, ws.limits.max_versions)
         if v:
-            store.add_event(sid, now_iso(), "strategy_saved", f"{note}: version {v['version_no']}", False)
+            store.add_event(sid, now_iso(), "strategy_saved", f"{note} as version {v['version_no']}", False)
         return v
 
 
@@ -128,7 +128,7 @@ def save(ws: Workspace, sid: str, data: dict, on_running: str | None, note: str 
             v = store.latest_version(sid)
             return {"id": sid, "version": v["version_no"] if v else None, "forward_test": None}
         v = store.add_version(sid, versions.text_hash(text), text, note, keep=ws.limits.max_versions)
-        title = f"{note}: version {v['version_no']}"
+        title = f"{note} as version {v['version_no']}"
         outcome = None
         if run and changed and on_running == "restart":
             store.stop_run(sid)

@@ -130,7 +130,7 @@ async function route() {
   const before = $main.firstChild;
   const skel = setTimeout(() => { if ($main.firstChild === before) clear($main).appendChild(skeleton()); }, 160);
   const hash = location.hash || "#/";
-  const parts = hash.slice(2).split("/").map(decodeURIComponent);
+  const parts = hash.slice(2).split("?")[0].split("/").map(decodeURIComponent);
   try {
     if (parts[0] === "s" && parts[1]) {
       const rec = await GET("/strategies/" + encodeURIComponent(parts[1]));
@@ -145,6 +145,7 @@ async function route() {
     else if (parts[0] === "markets" && parts[1] === "stats") await viewMarketStats();
     else if (parts[0] === "markets") await viewMarkets();
     else if (parts[0] === "journal") await viewJournal();
+    else if (parts[0] === "activity") await viewActivity();
     else if (parts[0] === "portfolio") await viewPortfolio();
     else if (parts[0] === "compare") await viewCompare();
     else if (parts[0] === "news") await viewNews();

@@ -269,7 +269,7 @@ def test_weekly_report_and_notifications(client, ws):
     assert not report.due({"weekly": False, "day": "sun", "hour": 18}, marker, sun_7pm)
     marker.write_text("2026-11-08")
     assert not report.due({"weekly": True, "day": "sun", "hour": 18}, marker, sun_7pm)
-    assert isinstance(client.get("/api/notifications").json()["items"], list)
+    assert isinstance(client.get("/api/activity").json()["items"], list)
 
 
 def test_email_settings_keep_password(client, ws):

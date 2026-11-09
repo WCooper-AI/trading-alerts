@@ -181,3 +181,74 @@ def test_empty_sections_are_not_a_rule_change(client, ws):
     r = client.put(f"/api/strategies/{sid}", json={"data": edited(costs={}, alerts={})}, headers=H)
     assert r.status_code == 200
 
+
+
+# --------------------------------------------------------------------------- activity log
+
+
+def test_activity_log_filters_and_unread(client, ws):
+    sid, run = start(client)
+    client.put(f"/api/strategies/{sid}", json={"data": edited(entry=NEW_ENTRY), "on_running": "keep"}, headers=H)
+    st = client.get("/api/settings").json()
+    st["poll_minutes"] = 30
+    client.put("/api/settings", json=st, headers=H)
+    store = StateStore(ws / "data" / "state.db")
+    store.add_event(sid, "2025-01-01T10:00:00+00:00", "signal", "Rules met\nRSI crossed", True, run["id"])
+    store.add_event(sid, "2025-01-01T11:00:00+00:00", "alert_failed", "Alert not sent: Rules met\nntfy: timed out", False, run["id"])
+    store.close()
+
+    everything = client.get("/api/activity").json()
+    kinds = [x["kind"] for x in everything["items"]]
+    assert kinds[:4] == ["alert_failed", "signal", "settings_changed", "strategy_saved"]
+    assert all(x["unread"] for x in everything["items"]) and everything["unread_count"] == len(everything["items"])
+    saved = next(x for x in everything["items"] if x["kind"] == "strategy_saved")
+    assert saved["title"].startswith("CSV test: saved") and saved["link"] == f"#/history/{sid}"
+    settings = next(x for x in everything["items"] if x["kind"] == "settings_changed")
+    assert "how often prices are checked" in settings["body"] and settings["link"] == "#/settings"
+
+    assert [x["kind"] for x in client.get("/api/activity?category=problems").json()["items"]] == ["alert_failed"]
+    # two saves: "Created" when the strategy was made, then the rule change
+    assert [x["kind"] for x in client.get("/api/activity?category=changes").json()["items"]] == ["settings_changed", "strategy_saved", "strategy_saved"]
+    assert client.get("/api/activity?category=trades").json()["items"] == []
+    assert client.get("/api/activity?category=nope").status_code == 422
+    assert len(client.get(f"/api/activity?strategy={sid}").json()["items"]) == 4  # the settings change isn't the strategy's
+
+    # looking marks everything seen, on the server, so another browser agrees
+    client.post("/api/activity/seen", headers=H)
+    after = client.get("/api/activity").json()
+    assert after["unread_count"] == 0 and not any(x["unread"] for x in after["items"])
+    assert client.get("/api/activity?unread=1").json()["items"] == []
+    store = StateStore(ws / "data" / "state.db")
+    store.add_event(sid, "2025-01-01T12:00:00+00:00", "closed", "Trade closed\n+£12", True, run["id"])
+    store.close()
+    fresh = client.get("/api/activity?unread=1").json()
+    assert [x["kind"] for x in fresh["items"]] == ["closed"] and fresh["unread_count"] == 1
+
+
+def test_failed_alerts_are_recorded(ws):
+    import pandas as pd
+
+    from tradealerts.config import load_config
+    from tradealerts.notify import Notifier
+    from tradealerts.runner import run_cycle
+    from tradealerts.sample import synthetic_bars
+
+    class Broken(Notifier):
+        name = "ntfy"
+
+        def send(self, msg):
+            raise RuntimeError("timed out")
+
+    c = TestClient(create_app(ws / "config.yaml"))
+    sid = c.post("/api/strategies", json={"data": {**CSV_STRATEGY, "template": False}}, headers=H).json()["id"]
+    cfg = load_config(ws / "config.yaml")
+    store = StateStore(cfg.state_db)
+    bars = synthetic_bars(days=90, freq="1h", seed=4)
+    run = store.active_run(sid) or c.post(f"/api/strategies/{sid}/forward-test/start", headers=H).json()
+    store.db.execute("UPDATE runs SET started_at = ? WHERE id = ?", (bars.index[1000].isoformat(), run["id"]))
+    store.commit()
+    for i in range(1001, len(bars), 7):
+        run_cycle(cfg, store, [Broken()], now=bars.index[i] + pd.Timedelta("1h"))
+    failed = store.events_page(["alert_failed"])
+    assert failed and "ntfy: timed out" in failed[0]["message"]
+    store.close()
