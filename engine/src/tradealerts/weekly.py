@@ -151,7 +151,7 @@ def due(cfg_report: dict, marker: Path, now: pd.Timestamp | None = None) -> bool
         now = pd.Timestamp(now).tz_localize("UTC").tz_convert(tz) if pd.Timestamp(now).tzinfo is None \
             else pd.Timestamp(now).tz_convert(tz)
     day = DAYS.index(cfg_report.get("day", "sun"))
-    if now.dayofweek != day or now.hour < int(cfg_report.get("hour", 18)):
+    if now.day_of_week != day or now.hour < int(cfg_report.get("hour", 18)):
         return False
     stamp = now.strftime("%Y-%m-%d")
     return not (marker.exists() and marker.read_text().strip() == stamp)

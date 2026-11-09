@@ -221,7 +221,7 @@ def shuffled_market(df: pd.DataFrame, rng: np.random.Generator) -> pd.DataFrame:
     prev[1:] = c[:-1]
     ratios = {"open": o / prev, "high": h / prev, "low": l / prev, "close": c / prev}
     idx = df.index
-    key = idx.dayofweek.to_numpy() * 1440 + idx.hour.to_numpy() * 60 + idx.minute.to_numpy()
+    key = idx.day_of_week.to_numpy() * 1440 + idx.hour.to_numpy() * 60 + idx.minute.to_numpy()
     order = np.arange(len(df))
     for k in np.unique(key):
         pos = np.flatnonzero(key == k)

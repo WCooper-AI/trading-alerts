@@ -18,7 +18,7 @@ def synthetic_bars(
     rng = np.random.default_rng(seed)
     idx = pd.date_range(start, periods=int(pd.Timedelta(days=days) / pd.Timedelta(freq)), freq=freq, tz="UTC")
     if weekdays_only:
-        idx = idx[idx.dayofweek < 5]
+        idx = idx[idx.day_of_week < 5]
     n = len(idx)
     bar_hours = pd.Timedelta(freq).total_seconds() / 3600
     # Slowly changing trend and volatility regimes

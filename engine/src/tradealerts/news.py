@@ -48,7 +48,7 @@ def us_jobs_reports(start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
     month = pd.Timestamp(start.year, start.month, 1)
     last = pd.Timestamp(end.year, end.month, 1)
     while month <= last:
-        first_friday = month + pd.Timedelta(days=(4 - month.dayofweek) % 7)
+        first_friday = month + pd.Timedelta(days=(4 - month.day_of_week) % 7)
         t = pd.Timestamp(f"{first_friday:%Y-%m-%d} 08:30", tz="America/New_York").tz_convert("UTC")
         rows.append({"time": t, "currency": "USD", "impact": "high", "title": "Non-Farm Employment Change",
                      "forecast": "", "previous": ""})

@@ -31,7 +31,7 @@ class FakeDuka:
         if self.broken and start < self.broken[1] and end > self.broken[0]:
             raise IndexError("list index out of range")  # what the library does on empty ranges
         idx = pd.date_range(start.ceil(self.STEP[interval]), end, freq=self.STEP[interval], inclusive="left")
-        idx = idx[idx.dayofweek < 5]
+        idx = idx[idx.day_of_week < 5]
         t = (idx - pd.Timestamp(0, tz="UTC")).total_seconds().to_numpy() / 3600.0
         mid = 5000 + 50 * np.sin(t / 50.0)
         shift = -self.half if side == "B" else self.half

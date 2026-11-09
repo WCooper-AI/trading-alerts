@@ -582,7 +582,7 @@ class DukascopyProvider(Provider):
             )
         if ask is None or ask.empty:
             return bid
-        both = bid.join(ask, how="inner", lsuffix="_bid", rsuffix="_ask")
+        both = bid.merge(ask, how="inner", left_index=True, right_index=True, suffixes=("_bid", "_ask"))
         if both.empty:
             return bid
         out = pd.DataFrame(index=both.index)

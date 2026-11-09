@@ -37,8 +37,8 @@ def test_shuffled_market_keeps_candle_shapes_and_drift():
     # candles only move to the same weekday and hour
     ret = lambda d: (d["close"] / d["close"].shift()).iloc[1:]
     rest = df.iloc[1:]  # the very first candle has no previous close to compare with
-    for key, grp in rest.groupby([rest.index.dayofweek, rest.index.hour]):
-        if key == (df.index[0].dayofweek, df.index[0].hour):
+    for key, grp in rest.groupby([rest.index.day_of_week, rest.index.hour]):
+        if key == (df.index[0].day_of_week, df.index[0].hour):
             continue  # holds the first candle, whose change is measured from its own open
         a = np.sort(ret(df).loc[grp.index].round(10).to_numpy())
         b = np.sort(ret(out).loc[grp.index].round(10).to_numpy())

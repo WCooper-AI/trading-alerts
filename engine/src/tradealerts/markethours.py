@@ -28,7 +28,7 @@ def weekend_reopen(symbol: str, now: pd.Timestamp | None = None) -> pd.Timestamp
     if now.tzinfo is None:
         now = now.tz_localize("UTC")
     ny = now.tz_convert(NY)
-    dow, hour = ny.dayofweek, ny.hour  # Monday = 0
+    dow, hour = ny.day_of_week, ny.hour  # Monday = 0
     closed = (dow == 4 and hour >= 17) or dow == 5 or (dow == 6 and hour < 18)
     if not closed:
         return None

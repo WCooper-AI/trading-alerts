@@ -215,7 +215,7 @@ def compile_condition(spec: Any, path: str = "condition") -> Evaluator:
         tz = spec.get("tz", "UTC") or "UTC"
         _check_tz(tz, path)
         return lambda ctx: pd.Series(
-            np.isin(ctx.df.index.tz_convert(tz).dayofweek, list(wanted)), index=ctx.df.index
+            np.isin(ctx.df.index.tz_convert(tz).day_of_week, list(wanted)), index=ctx.df.index
         )
 
     if keys == {"avoid_news"}:

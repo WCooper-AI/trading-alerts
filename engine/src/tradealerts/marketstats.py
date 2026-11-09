@@ -49,7 +49,7 @@ def _local(df: pd.DataFrame, tz: str) -> pd.DataFrame:
 def hour_grid(df: pd.DataFrame) -> dict:
     """Average size of an hourly candle (high to low, as % of price) for each weekday and hour."""
     rng = (df["high"] - df["low"]) / df["open"] * 100
-    frame = pd.DataFrame({"day": df.index.dayofweek, "hour": df.index.hour, "move": rng})
+    frame = pd.DataFrame({"day": df.index.day_of_week, "hour": df.index.hour, "move": rng})
     piv = frame.pivot_table(index="day", columns="hour", values="move", aggfunc="mean")
     counts = frame.pivot_table(index="day", columns="hour", values="move", aggfunc="count")
     per_day = {d: counts.loc[d].sum() for d in piv.index}
@@ -103,7 +103,7 @@ def typical_ranges(df: pd.DataFrame, now: pd.Timestamp) -> dict:
     daily = daily[counts.reindex(daily.index).fillna(0) >= 12]
     weekly = _resample(df, "W-FRI")
     out = {}
-    week_start = (now - pd.Timedelta(days=(now.dayofweek - 5) % 7)).normalize()  # the Saturday just gone
+    week_start = (now - pd.Timedelta(days=(now.day_of_week - 5) % 7)).normalize()  # the Saturday just gone
     for key, bars, cur_start in (("day", daily, now.normalize()), ("week", weekly, week_start)):
         done = bars[bars.index < cur_start]
         r = _ranges(done)

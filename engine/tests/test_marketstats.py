@@ -13,7 +13,7 @@ from tradealerts.web import DataCache, create_app
 
 def hourly(days=200, seed=3):
     idx = pd.date_range("2025-01-06", periods=24 * days, freq="h", tz="UTC")
-    idx = idx[idx.dayofweek < 5]
+    idx = idx[idx.day_of_week < 5]
     rng = np.random.default_rng(seed)
     busy = np.where(idx.hour == 14, 4.0, 1.0)
     c = 5000 + np.cumsum(rng.normal(0, 2, len(idx)))
