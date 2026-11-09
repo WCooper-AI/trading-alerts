@@ -6,14 +6,14 @@ import copy
 
 from fastapi import APIRouter, Body, Depends, Request
 
-from ... import compute
+from ... import __version__, compute, versions
 from ...jobs import Busy
 from ...recipes import RecipeError, build_strategy
-from ...strategy import read_raw, strategy_from_dict
+from ...strategy import ID_RE, read_raw, strategy_from_dict
 from ...workspace import Workspace
 from ..common import CURRENCY_SYMBOLS, ctx_of, err, workspace
 from ..prices import load_period
-from ..strategy_io import load, strategy_path, validate
+from ..strategy_io import load, now_iso, strategy_path, validate
 
 router = APIRouter()
 
@@ -33,7 +33,39 @@ def _run(request: Request, ws: Workspace, fn, *args):
 def backtest(request: Request, body: dict = Body(...), ws: Workspace = Depends(workspace)):
     s = validate(ws, body.get("data"))
     df, fine, test_start, notes = load_period(ctx_of(request), ws, s, body)
-    return _run(request, ws, compute.backtest, body["data"], df, fine, test_start, notes)
+    out = _run(request, ws, compute.backtest, body["data"], df, fine, test_start, notes)
+    out["meta"] = stamp(ws, s, body, out["metrics"])
+    return out
+
+
+SOURCE_NAMES = {"dukascopy": "Dukascopy", "yahoo": "Yahoo Finance", "oanda": "OANDA", "csv": "CSV file"}
+
+
+def stamp(ws: Workspace, s, body: dict, metrics: dict) -> dict:
+    """Everything needed to run the same backtest again and get the same answer."""
+    version = None
+    sid = body.get("strategy_id")
+    if isinstance(sid, str) and ID_RE.match(sid):
+        with ws.store(create=False) as store:
+            v = versions.version_with_rules(store, sid, body["data"]) if store else None
+            version = v["version_no"] if v else None
+    source = ws.config().data.get("source", "dukascopy") if s.market.provider == "auto" else s.market.provider
+    return {
+        "engine_version": __version__,
+        "rules_hash": versions.rules_fingerprint(body["data"]),
+        "version": version,                # saved version these exact rules match, if any
+        "market": s.market.label,
+        "symbol": s.market.symbol,
+        "source": SOURCE_NAMES.get(source, source),
+        "timeframe": s.market.timeframe,
+        "start": metrics.get("start"),
+        "end": metrics.get("end"),
+        "warmup_candles": metrics.get("warmup_candles"),
+        "spread": s.spread,
+        "used_data_spread": metrics.get("used_data_spread"),
+        "funding_pct": s.funding_pct,
+        "tested_at": now_iso(),
+    }
 
 
 def set_path(data: dict, path: list, value) -> None:

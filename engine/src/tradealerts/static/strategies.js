@@ -345,7 +345,7 @@ async function viewEditor(id, exampleName, preloaded, run) {
     return exportData();
   };
   const right = h("div", { class: "side" }, analysisPanel({
-    getData: testable, render: renderBacktest,
+    getData: testable, render: renderBacktest, strategyId: isNew ? null : id,
     intro: "Tests the rules as they are on screen, including unsaved changes, on the market's price history.",
     settings: () => pathSettings(data),
     apply: (setting, value) => { setPath(data, setting.path, value); changed(); rerender(); },

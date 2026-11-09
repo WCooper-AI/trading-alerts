@@ -158,3 +158,26 @@ def test_hand_edit_while_running_is_noted_by_the_checker(client, ws):
                for e in store.recent_events(10, run_id=run["id"]))
     assert store.latest_version(sid)["note"] == "Edited outside the app"
     store.close()
+
+
+# --------------------------------------------------------------------------- reproducibility stamp
+
+
+def test_backtest_stamp_says_what_was_tested(client, ws):
+    sid = client.post("/api/strategies", json={"data": CSV_STRATEGY}, headers=H).json()["id"]
+    # the editor sends empty sections the file doesn't have; same rules, same version
+    sent = edited(costs={}, alerts={}, name="Renamed on screen")
+    r = client.post("/api/backtest", json={"data": sent, "strategy_id": sid}, headers=H)
+    meta = r.json()["meta"]
+    assert meta["version"] == 1 and meta["source"] == "CSV file" and meta["timeframe"] == "1h"
+    assert meta["engine_version"] and meta["start"] and meta["end"] and len(meta["rules_hash"]) == 12
+    unsaved = client.post("/api/backtest", json={"data": edited(entry=NEW_ENTRY), "strategy_id": sid}, headers=H).json()["meta"]
+    assert unsaved["version"] is None and unsaved["rules_hash"] != meta["rules_hash"]
+    assert client.post("/api/backtest", json={"data": sent}, headers=H).json()["meta"]["version"] is None
+
+
+def test_empty_sections_are_not_a_rule_change(client, ws):
+    sid, run = start(client)
+    r = client.put(f"/api/strategies/{sid}", json={"data": edited(costs={}, alerts={})}, headers=H)
+    assert r.status_code == 200
+

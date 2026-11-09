@@ -111,7 +111,7 @@ function rangeValues(from, to, step, integer) {
 }
 
 /** Backtest, Compare settings and Luck check, sharing one test period. */
-function analysisPanel({ getData, render, intro, settings, apply, runLabel = "Run backtest" }) {
+function analysisPanel({ getData, render, intro, settings, apply, runLabel = "Run backtest", strategyId = null }) {
   const period = periodPicker({ custom: true });
   const TABS = [["backtest", "Backtest"], ["sweep", "Compare settings"], ["luck", "Luck check"]];
   let current = pref("ta-tool", "backtest");
@@ -133,7 +133,7 @@ function analysisPanel({ getData, render, intro, settings, apply, runLabel = "Ru
     btRun.disabled = true;
     clear(btOut).appendChild(h("p", { class: "loading" }, "Loading prices and testing your rules. Longer periods take longer the first time…"));
     try {
-      const res = await POST("/backtest", { data, ...period.value() });
+      const res = await POST("/backtest", { data, strategy_id: strategyId, ...period.value() });
       savePref("ta-did-backtest", "1");
       clear(btOut).appendChild(render(res));
       btRun.textContent = "Test again";
@@ -451,7 +451,27 @@ function renderBacktest(res) {
           h("td", { class: "num " + (x.pnl >= 0 ? "gain" : "loss") }, money(x.pnl, sym)),
           h("td", { class: "num" }, signed(x.r_multiple, "", 2))))))))]);
   }
+  if (res.meta) box.appendChild(testStamp(res.meta, sym));
   return box;
+}
+
+/** What exactly was tested, so the same backtest can be run again and compared. */
+function testStamp(meta, sym) {
+  const rules = meta.version ? `Version ${meta.version} of this strategy` : "Unsaved changes (not a saved version)";
+  const spread = meta.used_data_spread ? "Real bid/ask from the price data" : `${short(meta.spread)} price points`;
+  const rows = [
+    ["Rules", h("span", {}, rules, " ", h("span", { class: "muted" }, `(fingerprint ${meta.rules_hash})`))],
+    ["Market", `${meta.market} (${meta.symbol})`],
+    ["Price data", meta.source],
+    ["Candle size", meta.timeframe],
+    ["Period", `${day(meta.start)} to ${day(meta.end)}`],
+    ["Warm-up before the period", meta.warmup_candles ? `${meta.warmup_candles} candles` : "None (the data starts here)"],
+    ["Spread", spread],
+    ["Overnight funding", meta.funding_pct ? `${short(meta.funding_pct)}% a year` : "None"],
+    ["Tested", `${when(meta.tested_at)}, Trading Alerts ${meta.engine_version}`],
+  ];
+  return h("details", { class: "chart stamp" }, h("summary", {}, "How this was tested"),
+    h("dl", { class: "metrics" }, rows.map(([k, v]) => [h("dt", {}, k), h("dd", {}, v)])));
 }
 
 /**

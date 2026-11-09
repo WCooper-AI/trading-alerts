@@ -1,13 +1,15 @@
 """Strategy history: every saved version of a strategy file, and what a forward test was run on.
 
 A version is the strategy file's exact text. Its hash is the same ``source_hash`` the
-strategy carries when loaded, so a backtest's stamp, a forward test's snapshot and the
-History tab all point at the same thing.
+strategy carries when loaded, so a forward test's snapshot and the History tab point at the
+same file. A backtest's stamp uses ``rules_fingerprint`` instead: the trading rules alone, so
+renaming a strategy or how the editor lays the file out doesn't change it.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import yaml
@@ -20,9 +22,35 @@ def text_hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:12] if text else ""
 
 
+def _tidy(v):
+    """Drop blanks, so an empty section and a missing one count as the same."""
+    if isinstance(v, dict):
+        out = {k: _tidy(x) for k, x in v.items()}
+        return {k: x for k, x in out.items() if x not in (None, "", {}, [])}
+    if isinstance(v, list):
+        return [_tidy(x) for x in v]
+    return v
+
+
+def rules_fingerprint(data: dict | None) -> str:
+    """A short code for the trading rules alone: the same rules give the same code, whatever the
+    strategy is called or however the file is laid out."""
+    rules = _tidy({k: (data or {}).get(k) for k in RULE_KEYS})
+    return hashlib.sha256(json.dumps(rules, sort_keys=True, default=str).encode()).hexdigest()[:12]
+
+
+def version_with_rules(store, sid: str, data: dict) -> dict | None:
+    """The newest saved version of ``sid`` with exactly these trading rules."""
+    want = rules_fingerprint(data)
+    for v in store.versions(sid):
+        full = store.version(sid, v["version_no"])
+        if rules_fingerprint(parse(full["yaml"])) == want:
+            return full
+    return None
+
+
 def rules_changed(old: dict | None, new: dict | None) -> bool:
-    old, new = old or {}, new or {}
-    return any(old.get(k) != new.get(k) for k in RULE_KEYS)
+    return rules_fingerprint(old) != rules_fingerprint(new)
 
 
 def parse(text: str) -> dict:

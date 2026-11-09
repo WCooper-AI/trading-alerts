@@ -374,6 +374,7 @@ async function viewSimple(id, data, run) {
   const renderForm = () => clear(formBox).appendChild(settingsForm(recipe, st, changed));
   renderForm();
   results = analysisPanel({
+    strategyId: id,
     getData: async () => {
       clearTimeout(timer);
       const miss = missingSettings(recipe, st);
