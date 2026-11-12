@@ -5,8 +5,8 @@
 
 // --------------------------------------------------------------------- page: strategies list
 
-function importButton() {
-  const file = h("input", { type: "file", accept: ".yaml,.yml,text/yaml", hidden: true });
+function importPicker() {
+  const file = h("input", { type: "file", accept: ".yaml,.yml,text/yaml", hidden: true, "aria-label": "Strategy file to import" });
   file.addEventListener("change", async () => {
     const f = file.files[0];
     if (!f) return;
@@ -14,7 +14,36 @@ function importButton() {
     catch (e) { toast(e.message, true); }
     file.value = "";
   });
-  return h("span", {}, file, h("button", { type: "button", class: "quiet", onclick: () => file.click(), title: "Import a strategy file someone exported" }, "Import"));
+  return file;
+}
+
+/** One "Create strategy" button: guided setup, the full editor, or a file someone exported. */
+function createMenu({ big = false, label = "Create strategy" } = {}) {
+  const file = importPicker();
+  const items = [
+    ["Guided setup", "Pick a market and an idea, then fill in the blanks. Recommended.", () => { location.hash = "#/create"; }],
+    ["Build from scratch", "Every rule by hand in the full editor.", () => { location.hash = "#/new"; }],
+    ["Import a file", "A strategy file someone exported from Trading Alerts.", () => file.click()],
+  ];
+  const menu = h("div", { class: "menu", role: "menu", hidden: true });
+  const btn = h("button", { type: "button", class: "primary" + (big ? " big" : ""), "aria-haspopup": "menu", "aria-expanded": "false" },
+    label, h("span", { class: "caret", "aria-hidden": "true" }, "▾"));
+  const close = () => { menu.hidden = true; btn.setAttribute("aria-expanded", "false"); };
+  const open = () => { menu.hidden = false; btn.setAttribute("aria-expanded", "true"); menu.querySelector("button").focus(); };
+  items.forEach(([title, detail, go]) => menu.appendChild(h("button", { type: "button", role: "menuitem", class: "menu-item",
+    onclick: () => { close(); go(); } }, h("strong", {}, title), h("span", { class: "small muted" }, detail))));
+  btn.addEventListener("click", (e) => { e.stopPropagation(); menu.hidden ? open() : close(); });
+  menu.addEventListener("keydown", (e) => {
+    const all = [...menu.querySelectorAll("button")];
+    const i = all.indexOf(document.activeElement);
+    if (e.key === "ArrowDown") { e.preventDefault(); all[(i + 1) % all.length].focus(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); all[(i - 1 + all.length) % all.length].focus(); }
+    else if (e.key === "Escape") { close(); btn.focus(); }
+  });
+  const away = (e) => { if (!menu.hidden && !menu.contains(e.target)) close(); };
+  document.addEventListener("click", away);
+  app.cleanups.push(() => document.removeEventListener("click", away));
+  return h("span", { class: "menu-wrap" }, file, btn, menu);
 }
 
 async function viewStrategies() {
@@ -28,9 +57,7 @@ async function viewStrategies() {
     append(page, [h("div", { class: "welcome" },
       h("h1", {}, "Test a trading idea, then get told when it happens"),
       h("p", { class: "lede" }, "Pick a market and an idea, try it on past prices, and turn on alerts if you like what you see. Nothing is traded for you, and every strategy starts as a draft."),
-      h("div", { class: "actions" },
-        h("a", { class: "button primary big", href: "#/create" }, "Create your first strategy"),
-        h("a", { class: "button quiet", href: "#/new" }, "Build from scratch (advanced)")))]);
+      h("div", { class: "actions" }, createMenu({ big: true, label: "Create your first strategy" })))]);
     return;
   }
 
@@ -38,11 +65,9 @@ async function viewStrategies() {
     h("div", {}, h("h1", {}, "Strategies"),
       h("p", { class: "muted" }, "Drafts are for testing. Strategies with alerts on are checked on every new candle.")),
     h("div", { class: "actions" },
-      h("a", { class: "button quiet", href: "#/new" }, "Build from scratch"),
-      importButton(),
       h("a", { class: "button", href: "#/compare" }, "Compare"),
       h("a", { class: "button", href: "#/portfolio" }, "Test together"),
-      h("a", { class: "button primary", href: "#/create" }, "Create a strategy")))]);
+      createMenu()))]);
 
   // ----- search, filter and sort (remembered between visits)
   const STATUS_LABEL = { live: "Alerts on", testing: "Forward testing", draft: "Drafts", paused: "Paused", broken: "Needs fixing" };
@@ -111,16 +136,18 @@ async function viewStrategies() {
     const position = run ? positionText(run, d.direction) : "Not running";
     const go = () => { location.hash = "#/s/" + it.id; };
     return h("tr", { class: "row-link", onclick: (e) => { if (e.target.tagName !== "A") go(); } },
-      h("td", {}, h("a", { class: "name", href: "#/s/" + it.id }, d.name || it.file),
-        it.error ? h("p", { class: "small loss" }, it.error) : renderParts(describeCondition(d.entry || {}), "sentence small-sentence")),
+      h("td", { class: "name-cell" }, h("a", { class: "name", href: "#/s/" + it.id }, d.name || it.file),
+        it.error ? h("p", { class: "small loss" }, it.error)
+          : h("p", { class: "small muted entry-line", title: partsText(describeStrategy(d)) }, "Entry: ", partsText(describeCondition(d.entry || {})))),
       h("td", { class: "nowrap" }, (d.market || {}).label || (d.market || {}).symbol || "–", h("div", { class: "small muted" }, (d.market || {}).timeframe || "")),
       h("td", { class: "status-cell" }, pill(st, st === "broken" ? "Needs fixing" : null),
         run && run.health ? stateBadge(run.health) : null),
-      h("td", { class: "num" }, run ? money(run.balance, sym) : "–",
-        h("div", { class: "small muted" }, position)),
-      h("td", { class: "num spark-cell" }, sparkline(it.spark, run ? (run.pnl >= 0 ? "gain" : "loss") : "")),
-      h("td", { class: "num" }, run ? h("span", { class: run.pnl >= 0 ? "gain" : "loss" }, signedMoney(run.pnl, sym)) : "–",
-        h("div", { class: "small muted" }, run ? `${run.trades} ${run.trades === 1 ? "trade" : "trades"} since ${day(run.started_at)}` : "")));
+      ...(run ? [
+        h("td", { class: "num" }, money(run.balance, sym), h("div", { class: "small muted" }, position)),
+        h("td", { class: "num spark-cell" }, run.trades ? sparkline(it.spark, run.pnl >= 0 ? "gain" : "loss") : h("span", { class: "small muted" }, "No trades yet")),
+        h("td", { class: "num" }, h("span", { class: run.pnl >= 0 ? "gain" : "loss" }, signedMoney(run.pnl, sym)),
+          h("div", { class: "small muted" }, `${run.trades} ${run.trades === 1 ? "trade" : "trades"} since ${day(run.started_at)}`)),
+      ] : [h("td", { class: "muted not-running", colspan: 3 }, "Not running")]));
   }
   renderChips();
   renderRows();

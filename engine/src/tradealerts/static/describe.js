@@ -150,6 +150,9 @@ function describeStrategy(d) {
   return parts;
 }
 
+/** The sentence as plain text, for tooltips and titles. */
+function partsText(parts) { return parts.map((p) => (typeof p === "string" ? p : p.m)).join(""); }
+
 function renderParts(parts, cls = "sentence") {
   const p = h("p", { class: cls });
   for (const part of parts) {

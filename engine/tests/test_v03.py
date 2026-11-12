@@ -328,3 +328,11 @@ def test_dashboard_cards_carry_what_each_test_is_doing(client, ws):
         assert card["position"]["stop"] and "unrealised" in card["position"]
     else:
         assert card["position"] is None
+
+
+def test_strategy_list_spark_only_for_running_tests(client, ws):
+    client.post("/api/strategies", json={"data": {**CSV_STRATEGY, "name": "Draft only"}}, headers=H)
+    sid, run = start(client)
+    items = {x["id"]: x for x in client.get("/api/strategies").json()["strategies"]}
+    assert "spark" in items[sid] and items[sid]["live"]["run"]["trades"] == 0
+    assert "spark" not in items["draft-only"] and items["draft-only"]["live"] == {}
