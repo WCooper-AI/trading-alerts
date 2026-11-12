@@ -108,6 +108,17 @@ class Simulator:
             self.state["equity"] -= cost
         p["funded_until"] = str(until)
 
+    def _excursion(self, p: dict, h: float, l: float, hs: float) -> None:
+        """Track the worst and best the trade got to, at the side of the book it would exit on."""
+        risk = abs(p["entry_price"] - p["stop"])
+        if not risk:
+            return
+        sign = self.s.sign
+        best = ((h - hs) if sign > 0 else (l + hs)) - p["entry_price"]
+        worst = ((l - hs) if sign > 0 else (h + hs)) - p["entry_price"]
+        p["mfe_r"] = max(p.get("mfe_r", 0.0), best * sign / risk)
+        p["mae_r"] = min(p.get("mae_r", 0.0), worst * sign / risk)
+
     def _close(self, time, exit_price: float, reason: str, exit_half_spread: float) -> Event:
         """Close at ``exit_price``, the actual bid (long) or ask (short) received.
 
@@ -119,6 +130,7 @@ class Simulator:
         funding = p.get("funding", 0.0)
         pnl = gross - funding
         risk_amount = abs(p["entry_price"] - p["stop"]) * p["size"] * s.risk.point_value
+        exit_r = (exit_price - p["entry_price"]) * s.sign / abs(p["entry_price"] - p["stop"]) if p["stop"] != p["entry_price"] else 0.0
         spread_cost = (p.get("entry_half_spread", 0.0) + exit_half_spread) * p["size"] * s.risk.point_value
         self.state["equity"] += gross  # funding was already taken night by night
         self.state["position"] = None
@@ -141,6 +153,12 @@ class Simulator:
             "equity_after": self.state["equity"],
             "funding": funding,
             "spread_cost": spread_cost,
+            "entry_reason": p.get("entry_reason") or {},
+            "exit_values": getattr(self, "_values", {}) or {},
+            # the closing candle may run on past the stop or target after the trade is out,
+            # so the worst/best point while open can't go beyond the exit price itself
+            "mae_r": max(p.get("mae_r", 0.0), exit_r) if exit_r < 0 else p.get("mae_r", 0.0),
+            "mfe_r": min(p.get("mfe_r", 0.0), exit_r) if exit_r > 0 else p.get("mfe_r", 0.0),
         }
         return Event("closed", time, trade)
 
@@ -200,10 +218,13 @@ class Simulator:
         refs: dict[str, float | None],
         spread: float | None = None,
         fine: Callable[[], Any] | None = None,
+        values: dict[str, float | None] | None = None,
     ) -> list[Event]:
+        """``values``: what the entry rule read on this candle (indicator values), kept with the trade."""
         s, st, sign = self.s, self.state, self.s.sign
         hs = self._half_spread(spread)
         st["half_spread"] = hs
+        self._values = values or {}
         events: list[Event] = []
 
         # 0. funding for nights since the last candle, up to this open
@@ -238,6 +259,9 @@ class Simulator:
                     "entry_half_spread": hs,
                     "funding": 0.0,
                     "funded_until": str(time),
+                    "entry_reason": pend.get("reason") or {},
+                    "mae_r": 0.0,  # worst point while open, in R (0 or below)
+                    "mfe_r": 0.0,  # best point while open, in R (0 or above)
                 }
                 events.append(Event("opened", time, {k: v for k, v in st["position"].items()
                                                      if k not in ("funded_until",)}))
@@ -245,6 +269,7 @@ class Simulator:
         # 3. stop / target inside this candle
         p = st["position"]
         if p:
+            self._excursion(p, h, l, hs)
             opened_now = p["entry_time"] == str(time)
             hit = self._resolve_exit(p, o, h, l, hs, opened_now, fine)
             if hit:
@@ -272,7 +297,7 @@ class Simulator:
                 info.update(stop=stop, target=target, size=self.size_for(c, stop))
             except SkipTrade as exc:
                 info.update(stop=None, target=None, size=0.0, warning=str(exc))
-            st["pending_entry"] = {"signal_time": str(time), "refs": refs}
+            st["pending_entry"] = {"signal_time": str(time), "refs": refs, "reason": self._values}
             events.append(Event("signal", time, info))
 
         return events
@@ -281,5 +306,6 @@ class Simulator:
         """Close any open position at the last price (end of a backtest)."""
         if self.state["position"]:
             hs = self.state.get("half_spread", self.s.spread / 2)
+            self._values = {}
             return [self._close(pd.Timestamp(time) + self.bar, price - self.s.sign * hs, "end_of_data", hs)]
         return []

@@ -2,6 +2,7 @@
 
 import copy
 
+import pytest
 import yaml
 from fastapi.testclient import TestClient
 
@@ -353,3 +354,45 @@ def test_guided_preview_shows_gaps_until_filled(client):
         assert done["complete"] and done["placeholders"] == [] and done["data"]["entry"] == built["entry"]
     r = client.post("/api/recipes/preview", json={"recipe": "rsi", "market": "uk100", "settings": {"level": 25}}, headers=H)
     assert r.status_code == 200 and 25 not in r.json()["placeholders"] and r.json()["data"]["market"]["symbol"] == "uk100"
+
+
+# --------------------------------------------------------------------------- trade drill-down
+
+
+def test_backtest_payload_has_benchmark_and_trade_details(client):
+    r = client.post("/api/backtest", json={"data": CSV_STRATEGY}, headers=H).json()
+    m = r["metrics"]
+    assert r["benchmark"][0][1] == pytest.approx(m["start_equity"], rel=0.02)  # the first candle's own move
+    assert r["benchmark"][-1][1] == pytest.approx(m["start_equity"] * (1 + m["buy_and_hold_pct"] / 100), rel=1e-6)
+    assert len(r["benchmark"]) == len(r["equity"])
+    if r["trades"]:
+        t = r["trades"][0]
+        assert "mae_r" in t and "entry_reason" in t
+        marks = [mk for mk in r["chart"]["marks"] if "trade" in mk]
+        assert marks and all(0 <= mk["trade"] < len(r["trades"]) for mk in marks)
+        # the candles cover the first trade
+        import pandas as pd
+        assert pd.Timestamp(r["chart"]["candles"][0][0]) <= pd.Timestamp(t["entry_time"])
+
+
+def test_forward_test_trades_keep_the_details(client, ws):
+    import pandas as pd
+
+    from tradealerts.config import load_config
+    from tradealerts.runner import run_cycle
+    from tradealerts.sample import synthetic_bars
+
+    sid, run = start(client)
+    cfg = load_config(ws / "config.yaml")
+    store = StateStore(cfg.state_db)
+    bars = synthetic_bars(days=90, freq="1h", seed=4)
+    store.db.execute("UPDATE runs SET started_at = ? WHERE id = ?", (bars.index[1000].isoformat(), run["id"]))
+    store.commit()
+    for i in range(1001, len(bars), 7):
+        run_cycle(cfg, store, [], now=bars.index[i] + pd.Timedelta("1h"))
+    trades = store.trades(run_id=run["id"])
+    store.close()
+    assert trades and isinstance(trades[0]["entry_reason"], dict) and "RSI(14)" in trades[0]["entry_reason"]
+    assert trades[0]["mae_r"] <= 0 <= trades[0]["mfe_r"]
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    assert detail["trade_list"][0]["entry_reason"]

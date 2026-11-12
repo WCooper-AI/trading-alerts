@@ -435,9 +435,49 @@ function renderBacktest(res) {
   );
   append(box, [h("dl", { class: "metrics" }, rows.map(([k, v]) => [h("dt", {}, k), h("dd", {}, v)]))]);
   append(box, [h("ul", { class: "warnings" }, res.warnings.map((w) => h("li", {}, w)))]);
-  append(box, [lineChart(res.equity, { title: "Balance", fmt: (v) => money(v, sym), baseline: m.start_equity })]);
-  if (res.chart && res.chart.candles.length) append(box, [h("details", { class: "chart price-details" },
-    h("summary", {}, "Price chart with trades (latest candles)"), candleChart(res.chart, { height: 320 }))]);
+  // balance, with buy-and-hold over the same period for comparison
+  let equityNode = null;
+  const drawEquity = () => {
+    const show = res.benchmark && res.benchmark.length && pref("ta-show-bh", "") === "1";
+    const node = lineChart(res.equity, { title: "Balance", fmt: (v) => money(v, sym), baseline: m.start_equity,
+      compare: show ? res.benchmark : null, compareLabel: "Buy and hold",
+      onToggleCompare: res.benchmark && res.benchmark.length ? (on) => { savePref("ta-show-bh", on ? "1" : ""); drawEquity(); } : null,
+      compareOn: show });
+    if (equityNode) equityNode.replaceWith(node); else box.appendChild(node);
+    equityNode = node;
+  };
+  drawEquity();
+  // price chart: click a trade (row or marker) to zoom in on it
+  let chart = null, details = null, stepper = null, current = -1;
+  const rowsById = [];
+  const showTrade = (k) => {
+    if (!chart || k < 0 || k >= res.trades.length) return;
+    current = k;
+    const t = res.trades[k];
+    details.open = true;
+    chart.focus(t);
+    rowsById.forEach((tr, i) => tr.classList.toggle("selected", i === k));
+    clear(stepper);
+    const hold = `held ${t.bars_held} candle${t.bars_held === 1 ? "" : "s"}`;
+    const exc = t.mae_r !== undefined ? ` · worst ${signed(t.mae_r, "R", 1)}, best ${signed(t.mfe_r, "R", 1)}` : "";
+    const why = t.entry_reason && Object.keys(t.entry_reason).length
+      ? " · at entry " + Object.entries(t.entry_reason).map(([k2, v]) => `${k2} ${v === null ? "–" : num(v)}`).join(", ") : "";
+    append(stepper, [
+      h("button", { type: "button", class: "small", disabled: k === 0, onclick: () => showTrade(k - 1), "aria-label": "Previous trade" }, "‹ Prev"),
+      h("span", { class: "small" }, h("strong", {}, `Trade ${k + 1} of ${res.trades.length}`), ` · `,
+        h("span", { class: t.pnl >= 0 ? "gain" : "loss" }, `${money(t.pnl, sym)} (${signed(t.r_multiple, "R", 1)})`), ` · ${hold}${exc}${why}`),
+      h("button", { type: "button", class: "small", disabled: k === res.trades.length - 1, onclick: () => showTrade(k + 1), "aria-label": "Next trade" }, "Next ›"),
+      h("button", { type: "button", class: "quiet small", onclick: () => { current = -1; chart.clearFocus(); clear(stepper); rowsById.forEach((tr) => tr.classList.remove("selected")); } }, "Show all"),
+    ]);
+    details.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  };
+  if (res.chart && res.chart.candles.length) {
+    chart = candleChart(res.chart, { height: 320, onMark: (mk) => showTrade(mk.trade) });
+    stepper = h("div", { class: "trade-stepper inline" });
+    details = h("details", { class: "chart price-details" },
+      h("summary", {}, res.trades.length ? "Price chart with trades (click a trade to zoom in on it)" : "Price chart"), stepper, chart);
+    append(box, [details]);
+  }
   append(box, [lineChart(res.drawdown, { title: "Drawdown", fmt: (v) => num(v, 1) + "%", baseline: 0, tone: "loss", fill: true })]);
   if (res.trades.length) {
     const t = res.trades.slice().reverse();
@@ -445,11 +485,17 @@ function renderBacktest(res) {
       h("div", { class: "table-wrap" }, h("table", { class: "trades" },
         h("thead", {}, h("tr", {}, ["Opened", "Entry", "Closed", "Exit", "Size", "Reason"].map((x) => h("th", {}, x)),
           h("th", { class: "num" }, "P/L"), h("th", { class: "num" }, "R"))),
-        h("tbody", {}, t.map((x) => h("tr", {},
+        h("tbody", {}, t.map((x, ri) => {
+          const k = t.length - 1 - ri;  // newest first in the table; k is the index in res.trades
+          const tr = h("tr", { class: chart ? "clickable" : "", tabindex: chart ? "0" : null, title: chart ? "Show this trade on the chart" : null,
+            onclick: () => showTrade(k), onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); showTrade(k); } } },
           h("td", {}, when(x.entry_time)), h("td", {}, num(x.entry_price)), h("td", {}, when(x.exit_time)),
           h("td", {}, num(x.exit_price)), h("td", {}, short(x.size)), h("td", {}, x.exit_reason.replace(/_/g, " ")),
           h("td", { class: "num " + (x.pnl >= 0 ? "gain" : "loss") }, money(x.pnl, sym)),
-          h("td", { class: "num" }, signed(x.r_multiple, "", 2))))))))]);
+          h("td", { class: "num" }, signed(x.r_multiple, "", 2)));
+          rowsById[k] = tr;
+          return tr;
+        })))))]);
   }
   if (res.meta) box.appendChild(testStamp(res.meta, sym));
   return box;
@@ -499,17 +545,21 @@ function gridlines(s, lo, hi, y, fmt, W, P) {
   }
 }
 
-function lineChart(points, { title, fmt, baseline = null, tone = "ink", fill = true, height = 170, timeX = false, band = null }) {
+function lineChart(points, { title, fmt, baseline = null, tone = "ink", fill = true, height = 170, timeX = false, band = null,
+  compare = null, compareLabel = "Comparison", onToggleCompare = null, compareOn = false }) {
   const W = 560, H = height, P = 6;
   const wrap = h("div", { class: "chart" });
   const readout = h("span", { class: "readout" });
-  append(wrap, [h("div", { class: "chart-title" }, h("h3", {}, title), h("span", { class: "chart-tools" }, readout, title ? expandable(wrap) : null))]);
+  const toggle = onToggleCompare ? h("label", { class: "check small compare-toggle" },
+    h("input", { type: "checkbox", checked: compareOn || null, onchange: (e) => onToggleCompare(e.target.checked) }), h("span", {}, `Show ${compareLabel.toLowerCase()}`)) : null;
+  append(wrap, [h("div", { class: "chart-title" }, h("h3", {}, title), h("span", { class: "chart-tools" }, toggle, readout, title ? expandable(wrap) : null))]);
   if (!points || !points.length) { wrap.appendChild(h("p", { class: "muted small" }, "Not enough data to chart.")); return wrap; }
   if (points.length === 1) points = [points[0], [new Date().toISOString(), points[0][1]]];
   const ts = points.map((p) => new Date(p[0]).getTime());
   const bandRows = band && band.length > 1 ? band : null;
   const ys = points.map((p) => p[1]);
   if (bandRows) for (const b of bandRows) ys.push(b[1], b[5]);
+  if (compare) for (const c of compare) ys.push(c[1]);
   let lo = Math.min(...ys), hi = Math.max(...ys);
   if (baseline !== null) { lo = Math.min(lo, baseline); hi = Math.max(hi, baseline); }
   if (hi === lo) { const pad = Math.abs(hi) * 0.002 || 1; hi += pad; lo -= pad; }
@@ -534,6 +584,15 @@ function lineChart(points, { title, fmt, baseline = null, tone = "ink", fill = t
   }
   gridlines(s, lo, hi, y, fmt, W, P);
   if (baseline !== null) s.appendChild(svg("line", { x1: P, x2: W - P, y1: y(baseline), y2: y(baseline), class: "chart-base", "stroke-dasharray": "4 4" }));
+  if (compare && compare.length > 1) {
+    // same x mapping as the main line: by time, or by position when the main line is evenly spaced
+    const cx = (k) => (timeX ? xt(new Date(compare[k][0]).getTime()) : P + (k * (W - 2 * P)) / (compare.length - 1));
+    const cd = compare.map((c, k) => `${k ? "L" : "M"}${cx(k).toFixed(1)},${y(c[1]).toFixed(1)}`).join("");
+    const cp = svg("path", { d: cd, class: "chart-compare", "stroke-width": 1.5 });
+    const ct = svg("title", {}); ct.textContent = `${compareLabel}: ${fmt(compare[compare.length - 1][1])} at the end`;
+    cp.appendChild(ct);
+    s.appendChild(cp);
+  }
   if (fill) {
     const gid = "g" + ++gradSeq;
     const grad = svg("linearGradient", { id: gid, x1: 0, y1: 0, x2: 0, y2: 1 });

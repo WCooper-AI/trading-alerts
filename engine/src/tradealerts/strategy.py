@@ -69,12 +69,20 @@ class Prepared:
     entry: np.ndarray
     exit: np.ndarray
     refs: dict[str, np.ndarray]
+    values: dict[str, np.ndarray] = field(default_factory=dict)  # what the entry rule read, per bar
 
     def refs_at(self, i: int) -> dict[str, float | None]:
+        return self._at(self.refs, i)
+
+    def values_at(self, i: int) -> dict[str, float | None]:
+        return self._at(self.values, i)
+
+    @staticmethod
+    def _at(arrays: dict[str, np.ndarray], i: int) -> dict[str, float | None]:
         out = {}
-        for k, arr in self.refs.items():
+        for k, arr in arrays.items():
             v = float(arr[i])
-            out[k] = None if np.isnan(v) else v
+            out[k] = None if np.isnan(v) else round(v, 6)
         return out
 
 
@@ -103,6 +111,7 @@ class Strategy:
     def __post_init__(self):
         self._entry = rules.compile_condition(self.entry_spec, "entry")
         self._exit = rules.compile_condition(self.exit_spec, "exit.when") if self.exit_spec else None
+        self._reasons = [(label, rules.compile_operand(spec, "entry")) for label, spec in rules.reason_operands(self.entry_spec)]
         self._stop_level = self._level_operand(self.stop_spec, "exit.stop")
         self._target_level = (
             self._level_operand(self.target_spec, "exit.target") if self.target_spec else None
@@ -156,7 +165,8 @@ class Strategy:
             refs["stop_level"] = _to_array(self._stop_level(ctx), df)
         if self._target_level:
             refs["target_level"] = _to_array(self._target_level(ctx), df)
-        return Prepared(df.index, entry, exit_, refs)
+        values = {label: _to_array(fn(ctx), df) for label, fn in self._reasons}
+        return Prepared(df.index, entry, exit_, refs, values)
 
     def plan(self, entry_price: float, refs: dict[str, float | None]) -> tuple[float, float | None]:
         """Stop and target prices for a trade entered at ``entry_price``."""

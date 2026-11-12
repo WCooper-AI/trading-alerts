@@ -42,18 +42,19 @@ def candles_out(df: pd.DataFrame, limit: int) -> list:
 
 
 def trade_marks(trades: list[dict], since: pd.Timestamp | None) -> list:
+    """Entry and exit markers; ``trade`` is the index into ``trades`` so a click can find the trade."""
     out = []
-    for t in trades:
+    for k, t in enumerate(trades):
         et = pd.Timestamp(t["entry_time"])
         et = et.tz_localize("UTC") if et.tzinfo is None else et
         if since is not None and et < since and (not t.get("exit_time") or pd.Timestamp(t["exit_time"]) < since):
             continue
         side = "buy" if t.get("direction", "long") == "long" else "sell"
-        out.append({"time": t["entry_time"], "price": t["entry_price"], "kind": side,
+        out.append({"time": t["entry_time"], "price": t["entry_price"], "kind": side, "trade": k,
                     "label": f"{'Buy' if side == 'buy' else 'Sell'} {t['entry_price']:,.5g}"})
         if t.get("exit_time") and t.get("exit_price") is not None:
             pnl = t.get("pnl") or 0
-            out.append({"time": t["exit_time"], "price": t["exit_price"], "kind": "exit",
+            out.append({"time": t["exit_time"], "price": t["exit_price"], "kind": "exit", "trade": k,
                         "label": f"Closed by {str(t.get('exit_reason', '')).replace('_', ' ')}: "
                                  f"{'+' if pnl >= 0 else '-'}{abs(pnl):,.2f}",
                         "gain": pnl >= 0})
@@ -79,15 +80,24 @@ def backtest(data: dict, df, fine, test_start, notes: list[str]) -> dict:
     res = run_backtest(s, df, fine, notes=notes, start=test_start)
     eq = res.equity
     dd = (eq / eq.cummax() - 1) * 100
-    trades = res.trades.tail(500).to_dict("records") if len(res.trades) else []
-    tail = df.tail(300)
-    all_trades = res.trades.to_dict("records") if len(res.trades) else []
+    trades = res.trades.tail(2000).to_dict("records") if len(res.trades) else []
+    # candles from a little before the first shown trade to the end, so any trade can be looked at
+    start = len(df) - 300
+    if trades:
+        first_entry = pd.Timestamp(trades[0]["entry_time"])
+        start = min(start, int(df.index.searchsorted(first_entry)) - 50)
+    start = max(0, start, len(df) - 5000)
+    shown = df.iloc[start:]
+    period = df.loc[eq.index[0]:] if len(eq) else df
+    # bought at the first candle's open, like the buy-and-hold figure in the metrics
+    bench = period["close"] / float(period["open"].iloc[0]) * s.risk.account_size if len(period) else pd.Series(dtype=float)
     return _clean({
-        "chart": {"candles": candles_out(df, 300), "marks": trade_marks(all_trades, tail.index[0]) if len(tail) else [],
+        "chart": {"candles": candles_out(shown, len(shown)), "marks": trade_marks(trades, shown.index[0]) if len(shown) else [],
                   "timeframe": s.market.timeframe},
         "metrics": res.metrics,
         "warnings": warnings_for(res),
         "equity": _points(eq),
+        "benchmark": _points(bench),
         "drawdown": _points(dd),
         "trades": trades,
         "trade_count": len(res.trades),

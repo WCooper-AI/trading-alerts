@@ -187,3 +187,20 @@ def test_backtest_notes_too_little_history(bars_1h):
     enough = run_backtest(s, bars_1h, start=bars_1h.index[250])
     assert not any("candles of history" in n for n in enough.notes)
 
+
+
+def test_trades_record_why_and_how_far_they_went(bars_1h):
+    s = make_strategy(
+        entry={"left": {"indicator": "rsi", "period": 14}, "op": "crosses_above", "right": 30},
+        exit={"stop": {"atr": 2}, "target": {"r_multiple": 2}, "max_bars": 48},
+    )
+    res = run_backtest(s, bars_1h)
+    assert len(res.trades) > 5
+    for t in res.trades.to_dict("records"):
+        assert t["mae_r"] <= 0 <= t["mfe_r"]
+        assert set(t["entry_reason"]) == {"RSI(14)"} and 0 <= t["entry_reason"]["RSI(14)"] <= 100
+        assert set(t["exit_values"]) <= {"RSI(14)"}
+        if t["exit_reason"] == "stop":
+            assert t["mae_r"] == pytest.approx(-1.0, abs=0.35)  # it got to the stop (gaps and spread can overshoot)
+        if t["exit_reason"] == "target":
+            assert t["mfe_r"] >= 1.9

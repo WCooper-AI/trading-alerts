@@ -85,6 +85,7 @@ def run_backtest(strategy: Strategy, df: pd.DataFrame, fine: pd.DataFrame | None
             bool(prepared.entry[i]), bool(prepared.exit[i]), prepared.refs_at(i),
             spread=None if spreads is None else spreads[i],
             fine=lambda t=t: get_fine(t),
+            values=prepared.values_at(i),
         )
         for ev in events:
             if ev.kind == "closed":

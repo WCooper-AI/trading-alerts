@@ -199,7 +199,8 @@ def process_strategy(
         t = df.index[i]
         for ev in sim.step(t, o[i], h[i], l[i], c[i], bool(prepared.entry[i]),
                            bool(prepared.exit[i]), prepared.refs_at(i),
-                           spread=None if spreads is None else spreads[i], fine=lambda t=t: get_fine(t)):
+                           spread=None if spreads is None else spreads[i], fine=lambda t=t: get_fine(t),
+                           values=prepared.values_at(i)):
             all_events.append(ev)
             if ev.kind == "closed":
                 store.add_trade(strategy.id, ev.data, run["id"])

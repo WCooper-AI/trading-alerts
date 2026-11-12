@@ -321,3 +321,50 @@ def evaluate(spec_or_evaluator, df: pd.DataFrame, ctx: Context | None = None) ->
     ctx = ctx or Context(df)
     out = _tri(fn(ctx)).reindex(df.index)
     return out.fillna(False).astype(bool)
+
+
+def operand_label(spec: Any) -> str | None:
+    """A short name for a price or indicator operand ("RSI(14)", "close", "SMA(20) 1 bar ago").
+    None for plain numbers: the rule text already shows those."""
+    if isinstance(spec, str):
+        return spec
+    if not isinstance(spec, dict):
+        return None
+    if "indicator" in spec:
+        params = {k: v for k, v in spec.items() if k not in ("indicator", *_OPERAND_MODIFIERS) and k != "source"}
+        name = str(spec["indicator"]).upper().replace("_", " ")
+        base = f"{name}({', '.join(str(v) for v in params.values())})" if params else name
+    elif "field" in spec:
+        base = str(spec["field"])
+    else:
+        return None
+    shift = spec.get("shift") or 0
+    return f"{base} {shift} bar{'s' if shift != 1 else ''} ago" if shift else base
+
+
+def reason_operands(spec: Any) -> list[tuple[str, Any]]:
+    """(label, operand) for every price or indicator a condition reads, in rule order, no repeats."""
+    out: list[tuple[str, Any]] = []
+    seen: set[str] = set()
+
+    def walk(node):
+        if isinstance(node, list):
+            for x in node:
+                walk(x)
+            return
+        if not isinstance(node, dict):
+            return
+        if {"left", "op", "right"} <= set(node):
+            for side in (node["left"], node["right"]):
+                label = operand_label(side)
+                if label and label not in seen:
+                    seen.add(label)
+                    out.append((label, side))
+            return
+        for k in ("all", "any", "not"):
+            if k in node:
+                walk(node[k])
+
+    walk(spec)
+    return out
+

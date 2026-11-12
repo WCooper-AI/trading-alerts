@@ -186,7 +186,7 @@ function fmtPrice(v, d) { return v === null || v === undefined ? "–" : nf(d).f
  * Candles with trades, signals and price lines. Drag to scroll back, + and − to zoom,
  * click to pick a price (onPick). Call .update(data) with fresh data; the view stays put.
  */
-function candleChart(initial, { height = 380, onPick = null, title = null } = {}) {
+function candleChart(initial, { height = 380, onPick = null, title = null, onMark = null } = {}) {
   const W = 900, H = height, AX = 70, BOT = 24, TOP = 8;
   const wrap = h("div", { class: "candles" });
   const readout = h("div", { class: "candle-readout" });
@@ -210,6 +210,7 @@ function candleChart(initial, { height = 380, onPick = null, title = null } = {}
     return c.length > 1 ? new Date(c[c.length - 1][0]) - new Date(c[c.length - 2][0]) : 3600000;
   };
   let geom = null;
+  let focus = null;  // { entryIdx, exitIdx, lines } while looking at one trade
 
   function draw() {
     clear(svgEl);
@@ -223,7 +224,7 @@ function candleChart(initial, { height = 380, onPick = null, title = null } = {}
     const view = all.slice(end - visible, end);
     let lo = Math.min(...view.map((c) => c[3])), hi = Math.max(...view.map((c) => c[2]));
     const span0 = hi - lo || Math.abs(hi) * 0.001 || 1;
-    for (const l of [...(data.lines || []), ...(data.alerts || []).map((a) => ({ price: a.price }))]) {
+    for (const l of [...(data.lines || []), ...(focus ? focus.lines : []), ...(data.alerts || []).map((a) => ({ price: a.price }))]) {
       if (l.price > lo - span0 * 0.6 && l.price < hi + span0 * 0.6) { lo = Math.min(lo, l.price); hi = Math.max(hi, l.price); }
     }
     const pad = (hi - lo || 1) * 0.06;
@@ -253,6 +254,12 @@ function candleChart(initial, { height = 380, onPick = null, title = null } = {}
         : dt.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
       svgEl.appendChild(t);
     });
+    // the trade being looked at: shade the candles it was open for
+    if (focus) {
+      const a = focus.entryIdx - (end - visible), b = focus.exitIdx - (end - visible);
+      const x1 = Math.max(8, x(a) - slot / 2), x2 = Math.min(W - AX, x(b) + slot / 2);
+      if (x2 > x1) svgEl.appendChild(svg("rect", { x: x1, y: TOP, width: x2 - x1, height: H - TOP - BOT, class: "trade-span" }));
+    }
     // candles
     const bw = Math.max(1, Math.min(14, slot * 0.68));
     const g = svg("g", { class: first ? "candle-group enter" : "candle-group" });
@@ -274,6 +281,7 @@ function candleChart(initial, { height = 380, onPick = null, title = null } = {}
       svgEl.appendChild(tag);
     };
     for (const l of data.lines || []) hline(l.price, l.label, l.kind || "level");
+    for (const l of focus ? focus.lines : []) hline(l.price, l.label, l.kind);
     for (const a of data.alerts || []) hline(a.price, a.direction === "above" ? "Alert above" : "Alert below", "alert");
     // marks
     const t0 = new Date(view[0][0]).getTime(), bl = bar();
@@ -296,6 +304,10 @@ function candleChart(initial, { height = 380, onPick = null, title = null } = {}
       const tt = svg("title", {});
       tt.textContent = `${when(m.time)}: ${m.label}`;
       shape.appendChild(tt);
+      if (onMark && m.trade !== undefined) {
+        shape.classList.add("clickable");
+        shape.addEventListener("pointerup", (e) => { e.stopPropagation(); onMark(m); });
+      }
       svgEl.appendChild(shape);
     }
     // last price
@@ -381,6 +393,27 @@ function candleChart(initial, { height = 380, onPick = null, title = null } = {}
   zoomOut.addEventListener("click", () => { visible = Math.round(visible * 1.4); draw(); });
   latest.addEventListener("click", () => { offset = 0; draw(); });
   resetZoom.addEventListener("click", () => { visible = DEFAULT_VISIBLE; offset = 0; draw(); });
+  const indexOf = (iso) => {
+    const all = data.candles || [], t = new Date(iso).getTime();
+    let i = 0;
+    while (i < all.length - 1 && new Date(all[i + 1][0]).getTime() <= t) i++;
+    return i;
+  };
+  /** Zoom to one trade: its candles with ``context`` candles either side, and its price levels. */
+  wrap.focus = (trade, { context = 20 } = {}) => {
+    const all = data.candles || [];
+    if (!all.length) return;
+    const entryIdx = indexOf(trade.entry_time), exitIdx = trade.exit_time ? indexOf(trade.exit_time) : all.length - 1;
+    const lines = [{ price: trade.entry_price, label: "Entry", kind: "entry" }];
+    if (trade.exit_price !== null && trade.exit_price !== undefined) lines.push({ price: trade.exit_price, label: "Exit", kind: "exit" });
+    if (trade.stop) lines.push({ price: trade.stop, label: "Stop", kind: "stop" });
+    if (trade.target) lines.push({ price: trade.target, label: "Target", kind: "target" });
+    focus = { entryIdx, exitIdx, lines };
+    visible = Math.max(20, exitIdx - entryIdx + 1 + 2 * context);
+    offset = Math.max(0, all.length - (exitIdx + context + 1));
+    draw();
+  };
+  wrap.clearFocus = () => { focus = null; visible = DEFAULT_VISIBLE; offset = 0; draw(); };
   wrap.update = (next) => {
     const grew = (next.candles || []).length - (data.candles || []).length;
     if (offset && grew > 0) offset += grew; // keep looking at the same candles while scrolled back

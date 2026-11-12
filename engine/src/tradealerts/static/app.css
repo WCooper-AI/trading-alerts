@@ -1362,3 +1362,18 @@ button.tile:hover { background: var(--glass-thin); }
   .headline { gap: .8rem 1rem; }
 }
 
+/* ================================================================== trade drill-down (0.3 session 4) */
+.trade-span { fill: color-mix(in srgb, var(--accent) 10%, transparent); }
+.pline.entry { stroke: var(--accent); } .pline-label.entry { fill: var(--accent-text); }
+.pline.exit { stroke: var(--ink); } .pline-label.exit { fill: var(--ink); }
+.pline.stop { stroke: var(--loss); stroke-dasharray: 5 4; } .pline-label.stop { fill: var(--loss); }
+.pline.target { stroke: var(--gain); stroke-dasharray: 5 4; } .pline-label.target { fill: var(--gain); }
+.mark-buy.clickable, .mark-sell.clickable, .mark-exit.clickable { cursor: pointer; }
+.trades tr.clickable { cursor: pointer; }
+.trades tr.clickable:hover td { background: var(--glass-thin); }
+.trades tr.selected td { background: var(--accent-soft); }
+.trade-stepper { gap: .5rem; flex-wrap: wrap; margin: .4rem 0 .6rem; }
+.trade-stepper:empty { display: none; }
+.chart-compare { fill: none; stroke: var(--muted); stroke-dasharray: 2 3; }
+.compare-toggle { margin-right: .6rem; }
+

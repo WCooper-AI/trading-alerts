@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS paper_trades (
     direction TEXT, signal_time TEXT, entry_time TEXT, entry_price REAL,
     exit_time TEXT, exit_price REAL, size REAL, stop REAL, target REAL,
     exit_reason TEXT, pnl REAL, r_multiple REAL, bars_held INTEGER, equity_after REAL,
-    funding REAL, spread_cost REAL
+    funding REAL, spread_cost REAL,
+    entry_reason TEXT, exit_values TEXT, mae_r REAL, mfe_r REAL
 );
 CREATE TABLE IF NOT EXISTS run_equity (
     run_id INTEGER NOT NULL,
@@ -112,8 +113,9 @@ CREATE INDEX IF NOT EXISTS idx_trades_run ON paper_trades (run_id);
 TRADE_COLS = [
     "direction", "signal_time", "entry_time", "entry_price", "exit_time", "exit_price", "size",
     "stop", "target", "exit_reason", "pnl", "r_multiple", "bars_held", "equity_after",
-    "funding", "spread_cost",
+    "funding", "spread_cost", "entry_reason", "exit_values", "mae_r", "mfe_r",
 ]
+JSON_COLS = ("entry_reason", "exit_values")
 
 
 def _now() -> str:
@@ -134,7 +136,9 @@ class StateStore:
         """Add columns introduced after a database was first created."""
         for table, col, kind in (("paper_trades", "run_id", "INTEGER"), ("events", "run_id", "INTEGER"),
                                  ("paper_trades", "funding", "REAL"), ("paper_trades", "spread_cost", "REAL"),
-                                 ("runs", "source_hash", "TEXT"), ("runs", "strategy_yaml", "TEXT")):
+                                 ("runs", "source_hash", "TEXT"), ("runs", "strategy_yaml", "TEXT"),
+                                 ("paper_trades", "mae_r", "REAL"), ("paper_trades", "mfe_r", "REAL"),
+                                 ("paper_trades", "entry_reason", "TEXT"), ("paper_trades", "exit_values", "TEXT")):
             cols = [r[1] for r in self.db.execute(f"PRAGMA table_info({table})")]
             if cols and col not in cols:
                 self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {kind}")
@@ -252,7 +256,7 @@ class StateStore:
         marks = ", ".join("?" * (len(TRADE_COLS) + 2))
         self.db.execute(
             f"INSERT INTO paper_trades ({cols}) VALUES ({marks})",
-            [strategy_id, run_id] + [trade.get(c) for c in TRADE_COLS],
+            [strategy_id, run_id] + [json.dumps(trade.get(c) or {}) if c in JSON_COLS else trade.get(c) for c in TRADE_COLS],
         )
         self.db.commit()
 
@@ -273,7 +277,17 @@ class StateStore:
         if run_id is not None:
             q += " AND run_id = ?"
             args.append(run_id)
-        return [dict(r) for r in self.db.execute(q + " ORDER BY id", args)]
+        return [self._trade_row(r) for r in self.db.execute(q + " ORDER BY id", args)]
+
+    @staticmethod
+    def _trade_row(r) -> dict:
+        d = dict(r)
+        for c in JSON_COLS:
+            try:
+                d[c] = json.loads(d[c]) if d.get(c) else {}
+            except (TypeError, ValueError):
+                d[c] = {}
+        return d
 
     def paper_trade(self, trade_id: int) -> dict | None:
         r = self.db.execute("SELECT * FROM paper_trades WHERE id = ?", (trade_id,)).fetchone()

@@ -171,7 +171,10 @@ def test_candles_for_a_strategy(client):
 
 def test_backtest_includes_chart(client):
     out = client.post("/api/backtest", json={"data": CSV_STRATEGY}, headers=H).json()
-    assert len(out["chart"]["candles"]) == 300
+    # since 0.3 the candles cover every trade (at least the last 300, at most 5,000)
+    assert 300 <= len(out["chart"]["candles"]) <= 5000
+    if out["trades"]:
+        assert pd.Timestamp(out["chart"]["candles"][0][0]) <= pd.Timestamp(out["trades"][0]["entry_time"])
     assert {m["kind"] for m in out["chart"]["marks"]} <= {"buy", "sell", "exit"}
 
 
