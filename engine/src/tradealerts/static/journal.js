@@ -13,12 +13,15 @@ function toLocalInput(iso) {
 }
 const marketName = (m) => (marketByKey(m) || {}).label || m;
 
-async function journalDialog(entry, onSaved) {
-  const e = entry ? clone(entry) : { direction: null };
-  const builtIn = !entry || marketByKey(entry.market);
+async function journalDialog(entry, onSaved, prefill = null) {
+  /* entry: an existing journal entry to edit. prefill: starting values for a new one
+     (e.g. from a paper trade's "Log real trade" button), including paper_trade_id to link it. */
+  const e = entry ? clone(entry) : { direction: null, ...(prefill || {}) };
+  const given = entry || prefill;
+  const builtIn = !given || !given.market || marketByKey(given.market);
   const marketSel = choiceSelect([...app.recipes.markets.map((m) => [m.key, m.label]), ["__other", "Something else…"]],
-    entry ? (builtIn ? entry.market : "__other") : null, () => { syncOther(); loadPaper(); }, { label: "Market", cls: "wide" });
-  const other = h("input", { class: "wide", placeholder: "Market name", value: builtIn ? "" : entry.market, "aria-label": "Market name" });
+    given && given.market ? (builtIn ? given.market : "__other") : null, () => { syncOther(); loadPaper(); }, { label: "Market", cls: "wide" });
+  const other = h("input", { class: "wide", placeholder: "Market name", value: builtIn ? "" : given.market, "aria-label": "Market name" });
   const syncOther = () => { other.hidden = marketSel.value !== "__other"; };
   syncOther();
   const dir = h("div", { class: "segmented", role: "group", "aria-label": "Buy or sell" });
@@ -37,13 +40,16 @@ async function journalDialog(entry, onSaved) {
   async function loadPaper() {
     const key = marketSel.value && marketSel.value !== "__other" ? marketSel.value : "";
     clear(paper).appendChild(h("option", { value: "" }, "Not linked"));
-    if (!key) return;
+    const want = e.paper_trade_id ? String(e.paper_trade_id) : "";
     try {
-      const r = await GET("/paper-trades?market=" + encodeURIComponent(key));
+      const r = key ? await GET("/paper-trades?market=" + encodeURIComponent(key)) : { trades: [] };
       for (const t of r.trades) paper.appendChild(h("option", { value: String(t.id) },
         `${t.strategy_name}: ${t.direction === "short" ? "sell" : "buy"} ${when(t.entry_time)} at ${num(t.entry_price)}` +
         (t.exit_price !== null ? ` → ${num(t.exit_price)}` : "")));
-      paper.value = e.paper_trade_id ? String(e.paper_trade_id) : "";
+      if (want && !r.trades.some((t) => String(t.id) === want)) {  // linked from a run page whose market isn't a built-in one
+        paper.appendChild(h("option", { value: want }, `Forward-test trade #${want}`));
+      }
+      paper.value = want;
     } catch (_) { /* leave unlinked */ }
   }
   loadPaper();
@@ -53,6 +59,7 @@ async function journalDialog(entry, onSaved) {
   const field = (label, control, tip) => h("div", { class: "field" }, h("label", {}, label, tip ? infoTip(tip) : null), control);
   const dlg = h("dialog", { class: "wide-dialog journal-dialog", "aria-labelledby": "jt" },
     h("h2", { id: "jt" }, entry ? "Edit trade" : "Add a real trade"),
+    prefill && prefill.paper_trade_id ? h("p", { class: "small muted" }, "Filled in from the forward test's trade. Change the prices and times to what you actually got.") : null,
     h("div", { class: "fields" },
       field("Market", h("div", { class: "stack tight" }, marketSel, other)),
       field("Buy or sell", dir),

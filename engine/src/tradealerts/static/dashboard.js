@@ -313,7 +313,60 @@ function describeComparison(r, res) {
       h("span", {}, h("span", { class: "swatch outer" }), "middle 80% of the backtest's results over the same length of time")),
     h("p", { class: "small muted" }, "It's the strategy's own history for comparison, not a forecast."),
   ]);
+  if (res.windows) out.appendChild(windowTable(r, res.windows));
   return out;
+}
+
+const WINDOW_ROWS = [
+  ["win_rate_pct", "Win rate", (v) => num(v, 0) + "%"],
+  ["profit_factor", "Profit factor", (v) => num(v, 2)],
+  ["avg_r", "Average R", (v) => signed(v, "R")],
+  ["max_drawdown_pct", "Worst drop", (v) => num(v, 1) + "%"],
+  ["trades_per_month", "Trades a month", (v) => num(v, 1)],
+];
+const COST_ROWS = [["gross_pnl", "Gross P/L"], ["spread_cost", "Spread cost"], ["funding", "Funding cost"]];
+const POSITION_TEXT = { below: "below the usual range", within: "within the usual range", above: "above the usual range" };
+
+function windowTable(r, w) {
+  const sym = r.currency_symbol;
+  const box = h("div", { class: "stack tight" });
+  const title = h("h3", {}, `The last ${w.window} trade${w.window === 1 ? "" : "s"}, against the backtest's usual range`);
+  if (w.notice) box.appendChild(h("p", { class: "notice small" }, w.notice));
+  if (!w.live_trades) {
+    append(box, [title, h("p", { class: "muted" }, "No closed trades yet. The comparison starts with the first one.")]);
+    return box;
+  }
+  if (w.reason || !Object.keys(w.metrics || {}).length) {
+    append(box, [title, h("p", { class: "muted" }, w.reason || "The backtest gave no range to compare with.")]);
+    return box;
+  }
+  const row = (key, label, fmt) => {
+    const m = w.metrics[key];
+    if (!m) return null;
+    return h("tr", {}, h("td", {}, label), h("td", { class: "num" }, m.live === null ? "–" : fmt(m.live)),
+      h("td", { class: "num" }, `${fmt(m.low)} to ${fmt(m.high)}`), h("td", {}, POSITION_TEXT[m.position] || "–"));
+  };
+  const head = h("thead", {}, h("tr", {}, h("th", {}, ""), h("th", { class: "num" }, "This test"),
+    h("th", { class: "num" }, "Backtest, 10th–90th pct"), h("th", {}, "Where it sits")));
+  const money2 = (v) => signedMoney(v, sym);
+  append(box, [title,
+    h("div", { class: "table-wrap" }, h("table", { class: "compare-table" }, head,
+      h("tbody", {}, WINDOW_ROWS.map(([k, l, f]) => row(k, l, f))))),
+    h("h3", {}, "Where the money went"),
+    h("div", { class: "table-wrap" }, h("table", { class: "compare-table" }, head,
+      h("tbody", {}, COST_ROWS.map(([k, l]) => row(k, l, money2))))),
+    h("p", { class: "small muted" }, `Each range is from ${w.backtest_trades} backtest trades, resampled into stretches of ${w.window} in a row. ` +
+      "Gross P/L is before spread and funding; net is what the balance shows."),
+  ]);
+  return box;
+}
+
+function paperPrefill(r, t) {
+  /* What the journal can take from a paper trade: the same market, side, times and prices, linked to it. */
+  const known = (app.recipes.markets || []).find((m) => m.label === r.market || m.key === r.market);
+  return { market: known ? known.key : r.market, direction: t.direction || "long", entry_time: t.entry_time,
+    entry_price: t.entry_price, exit_time: t.exit_time, exit_price: t.exit_price, size: t.size,
+    currency: r.currency || null, paper_trade_id: t.id };
 }
 
 async function viewRun(id) {
@@ -364,11 +417,13 @@ async function viewRun(id) {
       h("div", { class: "panel" }, h("section", { class: "section" }, h("h2", {}, "Trades"),
         r.trade_list.length ? h("div", { class: "table-wrap" }, h("table", { class: "trades" },
           h("thead", {}, h("tr", {}, ["Opened", "Entry", "Closed", "Exit", "Reason"].map((x) => h("th", {}, x)),
-            h("th", { class: "num" }, "P/L"))),
+            h("th", { class: "num" }, "P/L"), h("th", {}))),
           h("tbody", {}, r.trade_list.map((t) => h("tr", {},
             h("td", {}, when(t.entry_time)), h("td", {}, num(t.entry_price)), h("td", {}, when(t.exit_time)),
             h("td", {}, num(t.exit_price)), h("td", {}, (t.exit_reason || "").replace(/_/g, " ")),
-            h("td", { class: "num " + (t.pnl >= 0 ? "gain" : "loss") }, signedMoney(t.pnl, sym)))))))
+            h("td", { class: "num " + (t.pnl >= 0 ? "gain" : "loss") }, signedMoney(t.pnl, sym)),
+            h("td", { class: "num" }, h("button", { type: "button", class: "quiet", title: "Add the trade you placed on this alert to the journal, linked to this paper trade",
+              onclick: () => journalDialog(null, () => { location.hash = "#/journal"; }, paperPrefill(r, t)) }, "Log real trade")))))))
           : h("p", { class: "muted" }, r.position ? "A trade is open. It will appear here once it closes." : "No trades yet. They appear here as the rules are met.")))));
   if (r.active && r.strategy_exists) page.appendChild(liveStrategyChart(r.strategy_id, r.market));
   clear($main).appendChild(page);
