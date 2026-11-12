@@ -360,14 +360,15 @@ function renderLuck(res) {
         h("p", { class: "muted small" }, `${day(res.start)} to ${day(res.end)}, ${res.trades} trades. Took ${res.seconds}s.`))),
     h("ul", { class: "checks" }, res.checks.map((c) => h("li", { class: c.passed === null ? "skip" : c.passed ? "pass" : "fail" },
       h("span", { class: "check-icon", "aria-hidden": "true" }, c.passed === null ? "–" : c.passed ? "✓" : "✕"),
-      h("div", {}, h("strong", {}, c.title), h("p", { class: "small muted" }, c.detail))))),
+      h("div", {}, h("strong", {}, c.title), h("p", { class: "small muted" }, c.detail),
+        c.next_step ? h("p", { class: "small next-step" }, h("strong", {}, "What you can do: "), c.next_step) : null)))),
   ]);
   if (res.random) box.appendChild(randomStrip(res.random));
   if (res.order) {
     const o = res.order;
     box.appendChild(h("p", { class: "small" }, `Same trades in other orders (${o.runs.toLocaleString("en-GB")} reshuffles): the worst drop was typically `,
-      h("strong", {}, `${num(Math.abs(o.median_dd), 1)}%`), `, and 1 order in 20 saw `, h("strong", {}, `${num(Math.abs(o.bad_dd), 1)}%`),
-      ` or worse. This backtest's order gave ${num(Math.abs(o.actual_dd), 1)}%. Plan for the bigger number.`));
+      h("strong", {}, `${num(Math.abs(o.median_dd), 1)}%`), `, 1 order in 20 saw `, h("strong", {}, `${num(Math.abs(o.bad_dd), 1)}%`),
+      ` or worse, and 1 in 20 stayed under ${num(Math.abs(o.good_dd), 1)}%. This backtest's order gave ${num(Math.abs(o.actual_dd), 1)}%. Plan for the bigger number.`));
   }
   if (res.resample) {
     const r = res.resample;
@@ -426,8 +427,11 @@ function renderBacktest(res) {
     ["Average win", money(m.avg_win, sym)], ["Average loss", money(m.avg_loss, sym)],
     ["Average trade", `${money(m.expectancy, sym)} (${signed(m.avg_r, "R")})`],
     ["Profit factor", m.profit_factor === null ? "No losses" : num(m.profit_factor)],
-    ["Longest losing run", String(m.longest_losing_streak)],
-    ["Candles held on average", num(m.avg_bars_held, 1)],
+    ["Largest win / loss", `${money(m.largest_win, sym)} / ${money(m.largest_loss, sym)}`],
+    ["Longest winning / losing run", `${m.longest_winning_streak} / ${m.longest_losing_streak}`],
+    ["Candles held on average", `${num(m.avg_bars_held, 1)} (${hours(m.avg_hold_hours)})`],
+    ["Sharpe / Sortino (yearly)", `${num(m.sharpe)} / ${num(m.sortino)}`],
+    ["Longest time below a previous high", `${num(m.longest_underwater_days, 1)} days`],
     ["How trades ended", Object.entries(m.exit_reasons || {}).map(([k, v]) => `${k.replace(/_/g, " ")} ${v}`).join(", ")],
     ["Spread paid", money(m.total_spread_cost || 0, sym) + (m.used_data_spread ? " (real bid/ask)" : "")],
     ["Overnight funding paid", money(m.total_funding || 0, sym)],
@@ -435,6 +439,7 @@ function renderBacktest(res) {
   );
   append(box, [h("dl", { class: "metrics" }, rows.map(([k, v]) => [h("dt", {}, k), h("dd", {}, v)]))]);
   append(box, [h("ul", { class: "warnings" }, res.warnings.map((w) => h("li", {}, w)))]);
+  if (res.why_no_trades) box.appendChild(renderWhyNoTrades(res.why_no_trades));
   // balance, with buy-and-hold over the same period for comparison
   let equityNode = null;
   const drawEquity = () => {
@@ -479,6 +484,13 @@ function renderBacktest(res) {
     append(box, [details]);
   }
   append(box, [lineChart(res.drawdown, { title: "Drawdown", fmt: (v) => num(v, 1) + "%", baseline: 0, tone: "loss", fill: true })]);
+  if (res.monte_carlo) box.appendChild(renderMonteCarlo(res.monte_carlo));
+  if (m.monthly_returns && m.monthly_returns.length) box.appendChild(monthlyGrid(m.monthly_returns));
+  if (m.trades) {
+    append(box, [h("div", { class: "chart-pair" },
+      histogram(m.r_histogram, { title: "Trades by result (R)", fmt: (v) => signed(v, "R", 1), unit: "R" }),
+      histogram(m.hold_histogram, { title: "Trades by time held", fmt: (v) => hours(v), unit: "" }))]);
+  }
   if (res.trades.length) {
     const t = res.trades.slice().reverse();
     append(box, [h("details", { class: "chart" }, h("summary", {}, `Trades (${res.trade_count})`),
@@ -499,6 +511,109 @@ function renderBacktest(res) {
   }
   if (res.meta) box.appendChild(testStamp(res.meta, sym));
   return box;
+}
+
+function hours(hrs) {
+  if (hrs === null || hrs === undefined) return "–";
+  if (hrs < 48) return `${num(hrs, 1)} h`;
+  return `${num(hrs / 24, 1)} days`;
+}
+
+/** Trades reshuffled into other orders: how deep the worst drop could have been with the same trades. */
+function renderMonteCarlo(mc) {
+  const W = 560, H = 150, P = 8, B = 26;
+  const bars = mc.histogram || [];
+  const top = Math.max(1, ...bars.map((b) => b.count));
+  const slot = (W - 2 * P) / Math.max(1, bars.length);
+  const bw = Math.max(4, Math.min(42, slot * 0.72));
+  const y = (c) => P + ((top - c) * (H - P - B)) / top;
+  const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Worst drawdown across reshuffled trade orders" });
+  s.appendChild(svg("rect", { x: 0, y: 0, width: W, height: H, rx: 14, class: "chart-bg" }));
+  const readout = h("span", { class: "readout" }, `${mc.runs.toLocaleString("en-GB")} reshuffles`);
+  bars.forEach((b, i) => {
+    const cx = P + slot * (i + 0.5);
+    const bar = svg("rect", { x: cx - bw / 2, y: y(b.count), width: bw, height: Math.max(1, H - B - y(b.count)), rx: Math.min(6, bw / 2), class: "bar loss" });
+    bar.style.animationDelay = `${i * 25}ms`;
+    bar.addEventListener("pointerenter", () => { readout.textContent = `${num(b.from, 0)}% to ${num(b.to, 0)}%: ${b.count} of ${mc.runs} orders`; });
+    bar.addEventListener("pointerleave", () => { readout.textContent = `${mc.runs.toLocaleString("en-GB")} reshuffles`; });
+    s.appendChild(bar);
+    if (bars.length <= 14 || i % 2 === 0) {
+      const t = svg("text", { x: cx, y: H - 8, class: "bar-label", "text-anchor": "middle" });
+      t.textContent = `${num(b.to, 0)}%`;
+      s.appendChild(t);
+    }
+  });
+  const stat = (label, v) => h("div", {}, h("div", { class: "big" }, `${num(Math.abs(v), 1)}%`), h("div", { class: "lbl" }, label));
+  return h("div", { class: "chart monte-carlo" },
+    h("div", { class: "chart-title" }, h("h3", {}, "Same trades, other orders"), readout),
+    h("p", { class: "small muted" }, "The backtest's trades shuffled into random orders. The worst drop depends a lot on which trades happen to come together, so plan for the bad case, not this backtest's own order."),
+    h("div", { class: "headline compact" }, stat("Mildest 1 in 20", mc.p95), stat("Typical (median)", mc.p50), stat("Worst 1 in 20", mc.p5), stat("This backtest's order", mc.actual_dd)),
+    s);
+}
+
+/** Years × months grid of balance changes, with a year-to-date column. */
+function monthlyGrid(years) {
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const cell = (v) => h("td", { class: "num " + (v === null ? "empty" : v > 0 ? "gain" : v < 0 ? "loss" : "") }, v === null ? "" : signed(v, "%", 1));
+  return h("details", { class: "chart", open: true }, h("summary", {}, "Month by month"),
+    h("div", { class: "table-wrap" }, h("table", { class: "monthly" },
+      h("thead", {}, h("tr", {}, h("th", {}, "Year"), MONTHS.map((x) => h("th", { class: "num" }, x)), h("th", { class: "num ytd" }, "Year"))),
+      h("tbody", {}, years.map((y) => h("tr", {}, h("th", {}, String(y.year)), y.months.map(cell), h("td", { class: "num ytd " + (y.ytd > 0 ? "gain" : y.ytd < 0 ? "loss" : "") }, signed(y.ytd, "%", 1))))))),
+    h("p", { class: "small muted" }, "Change in the balance over each calendar month of the test. Blank months are outside the test period."));
+}
+
+/** Bar chart of bucket counts ({from, to, count}), e.g. trades by R or by time held. */
+function histogram(buckets, { title, fmt, unit = "" }) {
+  const W = 560, H = 170, P = 8, B = 26;
+  let bars = buckets || [];
+  while (bars.length > 1 && !bars[0].count) bars = bars.slice(1);  // drop empty tails, keep the middle
+  while (bars.length > 1 && !bars[bars.length - 1].count) bars = bars.slice(0, -1);
+  const top = Math.max(1, ...bars.map((b) => b.count));
+  const slot = (W - 2 * P) / Math.max(1, bars.length);
+  const bw = Math.max(4, Math.min(42, slot * 0.72));
+  const y = (c) => P + ((top - c) * (H - P - B)) / top;
+  const label = (b) => (b.from === null ? `< ${fmt(b.to)}` : b.to === null ? `> ${fmt(b.from)}` : `${fmt(b.from)} to ${fmt(b.to)}`);
+  const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": title });
+  s.appendChild(svg("rect", { x: 0, y: 0, width: W, height: H, rx: 14, class: "chart-bg" }));
+  const total = bars.reduce((a, b) => a + b.count, 0);
+  const readout = h("span", { class: "readout" }, `${total} trades`);
+  bars.forEach((b, i) => {
+    const cx = P + slot * (i + 0.5);
+    const tone = unit !== "R" ? "ink" : b.to !== null && b.to <= 0 ? "loss" : "gain";
+    const bar = svg("rect", { x: cx - bw / 2, y: y(b.count), width: bw, height: Math.max(1, H - B - y(b.count)), rx: Math.min(6, bw / 2), class: `bar ${tone}` });
+    bar.style.animationDelay = `${i * 25}ms`;
+    bar.addEventListener("pointerenter", () => { readout.textContent = `${label(b)}: ${b.count} trade${b.count === 1 ? "" : "s"}`; });
+    bar.addEventListener("pointerleave", () => { readout.textContent = `${total} trades`; });
+    s.appendChild(bar);
+    const t = svg("text", { x: cx, y: H - 8, class: "bar-label", "text-anchor": "middle" });
+    t.textContent = b.to === null ? `> ${fmt(b.from)}` : fmt(b.to);
+    s.appendChild(t);
+  });
+  return h("div", { class: "chart" }, h("div", { class: "chart-title" }, h("h3", {}, title), readout), s);
+}
+
+/** Zero trades: how often each part of the entry rule held, so the blocking part stands out. */
+function renderWhyNoTrades(why) {
+  const rows = why.conditions || [];
+  const leaves = rows.filter((r) => r.kind === "leaf");
+  const least = leaves.length ? Math.min(...leaves.map((r) => (r.matched === null ? Infinity : r.matched))) : null;
+  const pct = (r) => (r.matched === null || !r.candles ? "–" : `${num((r.matched / r.candles) * 100, 1)}%`);
+  const list = h("ol", { class: "conditions" }, rows.map((r) => {
+    const lowest = r.kind === "leaf" && r.matched === least;
+    const name = r.kind === "leaf" ? renderParts(describeCondition(r.condition), "sentence small")
+      : h("p", { class: "sentence small muted" }, r.kind === "all" ? "all of these together" : r.kind === "any" ? "any of these" : "not");
+    return h("li", { class: (lowest ? "lowest " : "") + `depth-${Math.min(r.depth, 4)}` }, name,
+      h("span", { class: "count num" }, r.matched === null ? "couldn't be checked alone" : `${r.matched.toLocaleString("en-GB")} of ${r.candles.toLocaleString("en-GB")} candles (${pct(r)})`));
+  }));
+  const blocked = leaves.filter((r) => r.matched === 0);
+  const lede = blocked.length
+    ? `${blocked.length === 1 ? "One part" : `${blocked.length} parts`} of the entry rule never held on any candle in the test period.`
+    : rows.length && rows[0].matched === 0 && leaves.length > 1
+      ? "Each part held on some candles, but never all on the same candle."
+      : "The entry rule held on some candles; trades may have been skipped (see the notes above).";
+  return h("div", { class: "chart why-no-trades" },
+    h("div", { class: "chart-title" }, h("h3", {}, "Why didn't it trade?"), h("span", { class: "readout" }, `${why.candles.toLocaleString("en-GB")} candles checked`)),
+    h("p", { class: "small" }, lede, " The counts show how often each part held on its own."), list);
 }
 
 /** What exactly was tested, so the same backtest can be run again and compared. */

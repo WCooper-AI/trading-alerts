@@ -255,13 +255,63 @@ class _Check:
     detail: str
 
     def public(self) -> dict:
-        return {"key": self.key, "passed": self.passed, "title": self.title, "detail": self.detail}
+        return {"key": self.key, "passed": self.passed, "title": self.title, "detail": self.detail,
+                "next_step": next_step(self)}
 
 
 def _max_drawdown(eq: np.ndarray) -> np.ndarray:
     """Worst drop from a peak, in % (negative), for each row of a 2-D array of balances."""
     peak = np.maximum.accumulate(eq, axis=-1)
     return ((eq / peak) - 1).min(axis=-1) * 100
+
+
+def monte_carlo(trades: pd.DataFrame, start_equity: float, rng: np.random.Generator | None = None,
+                runs: int = N_SHUFFLES) -> dict | None:
+    """Shuffle the order of the backtest's trades ``runs`` times and measure the worst drawdown
+    of each order. Each trade's gain is kept as a % of the balance before it, so the sizes
+    still compound. None with fewer than 2 trades."""
+    n = len(trades)
+    if n < 2:
+        return None
+    rng = rng or np.random.default_rng(0)
+    before = (trades["equity_after"] - trades["pnl"]).to_numpy(dtype=float)
+    pct = trades["pnl"].to_numpy(dtype=float) / np.where(before > 0, before, np.nan)
+    pct = np.nan_to_num(pct)
+    perms = np.argsort(rng.random((runs, n)), axis=1)
+    eq = start_equity * np.cumprod(1 + pct[perms], axis=1)
+    eq = np.concatenate([np.full((runs, 1), start_equity), eq], axis=1)
+    dd = _max_drawdown(eq)
+    actual = float(_max_drawdown(np.concatenate([[start_equity], start_equity * np.cumprod(1 + pct)]))[()])
+    p5, p50, p95 = (float(x) for x in np.percentile(dd, [5, 50, 95]))
+    return {"actual_dd": actual, "median_dd": p50, "bad_dd": p5, "good_dd": p95, "runs": runs,
+            "p5": p5, "p50": p50, "p95": p95, "histogram": _dd_histogram(dd)}
+
+
+def _dd_histogram(dd: np.ndarray, buckets: int = 12) -> list[dict]:
+    """Counts of reshuffled orders per band of worst drawdown (% as positive numbers)."""
+    depth = -dd
+    hi = float(np.ceil(depth.max())) or 1.0
+    edges = np.linspace(0, hi, buckets + 1)
+    counts, _ = np.histogram(depth, bins=edges)
+    return [{"from": float(edges[i]), "to": float(edges[i + 1]), "count": int(c)} for i, c in enumerate(counts)]
+
+
+# Factual next steps when a luck check does not pass. No judgement words: the user decides.
+NEXT_STEPS = {
+    "trades": "Test over a longer period, add more markets, or use rules that trigger more often, then run the luck check again.",
+    "halves": "Compare the trades in each half: the market may have behaved differently. "
+              "Test the rules over other periods and markets to see which conditions they need.",
+    "resample": "The profit depends on a few large trades. Look at the largest wins in the trade list "
+                "and check whether they would be repeatable, then test over more data.",
+    "random": "The rules did about as well on random price paths. The result is consistent with the market's drift "
+              "or chance. Test on other markets or periods, or change the entry rule, and run the luck check again.",
+}
+
+
+def next_step(check: "_Check") -> str | None:
+    if check.passed is None:
+        return None
+    return None if check.passed else NEXT_STEPS.get(check.key)
 
 
 def luck_check(strategy: Strategy, df: pd.DataFrame, fine: pd.DataFrame | None, start: pd.Timestamp | None,
@@ -311,17 +361,7 @@ def luck_check(strategy: Strategy, df: pd.DataFrame, fine: pd.DataFrame | None, 
             "If many of those sets lose money, the profit leans on a handful of trades. Under 5% passes.",
         ))
         # trade order: how bad could the drawdown have been with the same trades in another order?
-        before = (trades["equity_after"] - trades["pnl"]).to_numpy(dtype=float)
-        pct = trades["pnl"].to_numpy(dtype=float) / np.where(before > 0, before, np.nan)
-        pct = np.nan_to_num(pct)
-        perms = np.argsort(rng.random((N_SHUFFLES, n)), axis=1)
-        start_eq = strategy.risk.account_size
-        eq = start_eq * np.cumprod(1 + pct[perms], axis=1)
-        eq = np.concatenate([np.full((N_SHUFFLES, 1), start_eq), eq], axis=1)
-        dd = _max_drawdown(eq)
-        actual = float(_max_drawdown(np.concatenate([[start_eq], start_eq * np.cumprod(1 + pct)]))[()])
-        out["order"] = {"actual_dd": actual, "median_dd": float(np.median(dd)), "bad_dd": float(np.percentile(dd, 5)),
-                        "runs": N_SHUFFLES}
+        out["order"] = monte_carlo(trades, strategy.risk.account_size, rng)
     else:
         checks.append(_Check("resample", None, "Too few trades to resample",
                              "Needs at least 5 trades."))
@@ -399,3 +439,40 @@ def backtest_range(equity: pd.Series, hours: list[float], min_windows: int = 30)
 
 def bar_hours(timeframe: str) -> float:
     return timeframes.to_timedelta(timeframe) / pd.Timedelta(hours=1)
+
+
+# --------------------------------------------------------------------------- why didn't it trade?
+
+
+def condition_counts(spec, df: pd.DataFrame, since: pd.Timestamp | None = None) -> list[dict]:
+    """How often each part of an entry rule held over ``df``: one row per group and leaf
+    condition, in rule order, with its path in the rule tree (``entry.all[1]``), the raw
+    condition, the candles it matched and the candles checked. Shown when a backtest
+    has no trades, to point at the part that blocked it."""
+    from . import rules
+
+    ctx = rules.Context(df)  # indicators warm up on the candles before ``since``
+    in_period = (df.index >= since) if since is not None else np.ones(len(df), dtype=bool)
+    total = int(in_period.sum())
+    out: list[dict] = []
+
+    def walk(node, path: str, depth: int):
+        try:
+            matched = int(rules.evaluate(rules.compile_condition(node, path), df, ctx).to_numpy()[in_period].sum())
+        except Exception:  # noqa: BLE001  (a part that can't be evaluated alone still gets a row)
+            matched = None
+        kind = next((k for k in ("all", "any", "not") if isinstance(node, dict) and k in node), "leaf")
+        out.append({"path": path, "kind": kind, "depth": depth, "condition": node, "matched": matched, "candles": total})
+        if kind in ("all", "any"):
+            for i, child in enumerate(node[kind]):
+                walk(child, f"{path}.{kind}[{i}]", depth + 1)
+        elif kind == "not":
+            walk(node["not"], f"{path}.not", depth + 1)
+
+    walk(spec, "entry", 0)
+    return out
+
+
+def why_no_trades(strategy: Strategy, df: pd.DataFrame, start: pd.Timestamp | None) -> dict:
+    rows = condition_counts(strategy.entry_spec, df, start)
+    return {"candles": rows[0]["candles"] if rows else 0, "conditions": rows}
