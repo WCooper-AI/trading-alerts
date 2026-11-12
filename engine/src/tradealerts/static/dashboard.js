@@ -290,7 +290,11 @@ function describeComparison(r, res) {
   const pts = res.points;
   const start = r.start_balance;
   const pct = (v) => (v / start - 1) * 100;
-  append(out, [h("p", { class: "small muted" }, `Backtest from ${day(bt.start)} to ${day(bt.end)}: ${signed(bt.return_pct, "%")}, ${bt.trades} trades, with the rules as they are now.`)]);
+  const rules = r.version ? `with version ${r.version} of the rules, the one this test runs on` : "with the rules this test started on";
+  append(out, [h("p", { class: "small muted" }, `Backtest from ${day(bt.start)} to ${day(bt.end)}: ${signed(bt.return_pct, "%")}, ${bt.trades} trades, ${rules}.`)]);
+  const edited = (r.events || []).filter((ev) => ev.kind === "strategy_saved");
+  if (edited.length) out.appendChild(h("p", { class: "small muted" },
+    `The rules were saved ${edited.length === 1 ? "once" : edited.length + " times"} while this test ran (last ${when(edited[0].bar_time || edited[0].created_at)}). The comparison uses the rules the test started on.`));
   if (pts.length < 2) {
     out.appendChild(h("p", {}, "Not enough time has passed to compare yet. Check back once a few candles have closed."));
     return out;
