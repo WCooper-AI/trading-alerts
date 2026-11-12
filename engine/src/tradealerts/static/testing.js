@@ -113,7 +113,7 @@ function rangeValues(from, to, step, integer) {
 /** Backtest, Compare settings and Luck check, sharing one test period. */
 function analysisPanel({ getData, render, intro, settings, apply, runLabel = "Run backtest", strategyId = null }) {
   const period = periodPicker({ custom: true });
-  const TABS = [["backtest", "Backtest"], ["sweep", "Compare settings"], ["luck", "Luck check"]];
+  const TABS = [["backtest", "Backtest"], ["sweep", "Compare settings"], ["optimise", "Optimiser"], ["luck", "Luck check"]];
   let current = pref("ta-tool", "backtest");
   if (!TABS.some(([k]) => k === current)) current = "backtest";
   const seg = h("div", { class: "segmented tabs", role: "tablist", "aria-label": "Testing tools" });
@@ -201,6 +201,9 @@ function analysisPanel({ getData, render, intro, settings, apply, runLabel = "Ru
     h("div", { class: "field" }, h("label", {}, "Setting"), pick), rangeBox, rangeNote,
     h("div", { class: "tool-actions" }, swRun), swOut);
 
+  // --- optimiser
+  const opt = optimiserPane({ fetchData, settings, apply, period });
+
   // --- luck check
   const lkOut = h("div");
   const lkRun = h("button", { class: "primary", type: "button" }, "Run luck check");
@@ -220,7 +223,7 @@ function analysisPanel({ getData, render, intro, settings, apply, runLabel = "Ru
       "a handful of big winners, or rules that do just as well on made-up prices."),
     h("div", { class: "tool-actions" }, lkRun), lkOut);
 
-  const panes = { backtest: backtestPane, sweep: sweepPane, luck: luckPane };
+  const panes = { backtest: backtestPane, sweep: sweepPane, optimise: opt.pane, luck: luckPane };
   function show(k) {
     current = k;
     savePref("ta-tool", k);
@@ -231,18 +234,251 @@ function analysisPanel({ getData, render, intro, settings, apply, runLabel = "Ru
     }
     clear(holder).appendChild(panes[k]);
     if (k === "sweep") refreshSettings();
+    if (k === "optimise") opt.refresh();
   }
   show(current);
   const panel = h("div", { class: "panel tools" },
     h("section", { class: "section tool-top" }, seg, h("div", { class: "bt-controls" }, period)), holder);
   panel.markStale = () => {
-    for (const out of [btOut, swOut, lkOut]) {
-      if (out.querySelector(".plain-results, .headline, .sweep, .luck") && !out.querySelector(".stale")) {
+    for (const out of [btOut, swOut, opt.out, lkOut]) {
+      if (out.querySelector(".plain-results, .headline, .sweep, .optimiser, .luck") && !out.querySelector(".stale")) {
         out.insertBefore(h("p", { class: "notice stale" }, "You've changed the settings. Run it again to update these results."), out.firstChild);
       }
     }
   };
   return panel;
+}
+
+/** Optimiser: every combination of up to three settings, run in the background with progress and a Stop button. */
+const MAX_OPT_SETTINGS = 3;
+const SCORE_OPTIONS = [["return", "Return"], ["return_dd", "Return ÷ worst drop"], ["profit_factor", "Profit factor"], ["sharpe", "Steadiness (Sharpe)"]];
+function comboCap() { return typeof isHosted === "function" && isHosted() ? 200 : 2000; }
+
+function optimiserPane({ fetchData, settings, apply, period }) {
+  let list = [];
+  let axes = [newAxis()];
+  let score = pref("ta-opt-score", "return");
+  let minTrades = 30;
+  let job = null;
+  const axesBox = h("div", { class: "opt-axes" });
+  const note = h("p", { class: "small muted", "aria-live": "polite" });
+  const out = h("div");
+  const progress = h("div", { class: "opt-progress", hidden: true });
+  const run = h("button", { class: "primary", type: "button" }, "Find the best combination");
+  const addBtn = h("button", { type: "button", class: "quiet", onclick: () => { if (axes.length < MAX_OPT_SETTINGS) { axes.push(newAxis()); renderAxes(); } } }, "+ Add a setting");
+
+  function newAxis() { return { chosen: null, range: { from: null, to: null, step: null }, values: [] }; }
+  function refresh() {
+    list = settings();
+    for (const a of axes) {
+      if (!a.chosen) continue;
+      const i = list.findIndex((x) => x.label === a.chosen.label);
+      a.chosen = i >= 0 ? list[i] : null;
+    }
+    renderAxes();
+  }
+  function axisValues(a) {
+    if (!a.chosen) return { values: [], note: "" };
+    if (a.chosen.type === "select") return { values: a.chosen.options.map((o) => o.value), note: `Every option: ${a.chosen.options.map((o) => o.label).join(", ")}.` };
+    return rangeValues(a.range.from, a.range.to, a.range.step, a.chosen.integer);
+  }
+  function combos() { return axes.reduce((n, a) => n * (a.values.length || 0), 1); }
+  function updateNote() {
+    const ready = axes.filter((a) => a.chosen);
+    if (!ready.length || ready.some((a) => !a.values.length)) { note.textContent = ""; return; }
+    const n = combos();
+    const cap = comboCap();
+    note.textContent = n > cap ? `That's ${n.toLocaleString()} combinations. This edition runs ${cap.toLocaleString()} at most in one go: use bigger steps or fewer values.`
+      : `${n.toLocaleString()} combination${n === 1 ? "" : "s"} to test${n > 300 ? " (this can take several minutes)" : ""}.`;
+    note.classList.toggle("loss", n > cap);
+  }
+  function renderAxes() {
+    clear(axesBox);
+    axes.forEach((a, idx) => {
+      const pick = h("select", { class: "wide", "aria-label": `Setting ${idx + 1}` });
+      pick.appendChild(h("option", { value: "", disabled: true }, list.length ? "Choose a setting…" : "Fill in some settings first"));
+      list.forEach((x, i) => pick.appendChild(h("option", { value: String(i), disabled: axes.some((o) => o !== a && o.chosen && o.chosen.label === x.label) }, x.label)));
+      pick.value = a.chosen ? String(list.findIndex((x) => x.label === a.chosen.label)) : "";
+      pick.classList.toggle("to-fill", !a.chosen);
+      const fields = h("div", { class: "range-box" });
+      const axisNote = h("p", { class: "small muted" });
+      const upd = () => { const r = axisValues(a); a.values = r.values; axisNote.textContent = r.note; updateNote(); };
+      const drawFields = () => {
+        clear(fields);
+        if (a.chosen && a.chosen.type !== "select") {
+          const field = (key, label) => h("div", { class: "field" }, h("label", {}, label),
+            numberInput(a.range[key], (n) => { a.range[key] = n; upd(); }, { label, step: "any", cls: "narrow", allowEmpty: false }));
+          append(fields, [h("div", { class: "inline range-fields" }, field("from", "From"), field("to", "To"), field("step", "Step")),
+            isBlank(a.chosen.current) ? null : h("p", { class: "small muted" }, `Currently ${short(a.chosen.current)}.`)]);
+        }
+        upd();
+      };
+      pick.addEventListener("change", () => { a.chosen = list[Number(pick.value)]; a.range = { from: null, to: null, step: null }; pick.classList.remove("to-fill"); drawFields(); renderAxes(); });
+      drawFields();
+      axesBox.appendChild(h("div", { class: "opt-axis" },
+        h("div", { class: "field" }, h("label", {}, `Setting ${idx + 1}`), h("div", { class: "inline" }, pick,
+          axes.length > 1 ? h("button", { type: "button", class: "quiet", "aria-label": "Remove this setting", onclick: () => { axes.splice(idx, 1); renderAxes(); } }, "Remove") : null)),
+        fields, axisNote));
+    });
+    addBtn.hidden = axes.length >= MAX_OPT_SETTINGS;
+    updateNote();
+  }
+
+  function showProgress(st) {
+    const total = st && st.total ? st.total : 0;
+    const done = st ? st.done : 0;
+    const pct = total ? Math.round(done / total * 100) : 0;
+    progress.hidden = false;
+    clear(progress);
+    append(progress, [
+      h("div", { class: "inline", style: "justify-content:space-between;align-items:center;gap:1rem" },
+        h("p", { class: "small muted", style: "margin:0" }, total ? `${done.toLocaleString()} of ${total.toLocaleString()} combinations tested (${pct}%)` : "Starting…"),
+        h("button", { type: "button", class: "quiet", onclick: stop }, "Stop")),
+      h("div", { class: "progress", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(pct),
+        style: "height:.45rem;border-radius:999px;background:var(--glass-thin);overflow:hidden;margin:.4rem 0 .2rem" },
+        h("span", { class: "progress-fill", style: `width:${pct}%` })),
+    ]);
+  }
+  async function stop() {
+    if (!job) return;
+    try { await POST(`/jobs/${encodeURIComponent(job)}/cancel`, {}); } catch (e) { toast(e.message, true); }
+  }
+  async function poll(id, chosenAxes) {
+    while (job === id) {
+      let st;
+      try { st = await GET(`/jobs/${encodeURIComponent(id)}`); } catch (e) { finish(); clear(out).appendChild(h("p", { class: "error-box" }, e.message)); return; }
+      if (st.status === "running") { showProgress(st); await new Promise((r) => setTimeout(r, 700)); continue; }
+      finish();
+      if (st.status === "done") clear(out).appendChild(renderOptimiser(st.result, chosenAxes, apply ? applyRow : null));
+      else if (st.status === "cancelled") clear(out).appendChild(h("p", { class: "notice" }, `Stopped after ${st.done.toLocaleString()} of ${st.total.toLocaleString()} combinations.`));
+      else clear(out).appendChild(h("p", { class: "error-box" }, st.error || "The optimiser run failed."));
+      return;
+    }
+  }
+  function finish() { job = null; progress.hidden = true; run.disabled = false; }
+  function applyRow(chosenAxes, values) {
+    chosenAxes.forEach((a, i) => { apply(a, values[i]); a.current = values[i]; });
+    toast("Settings applied. Save the strategy to keep them.");
+  }
+  run.addEventListener("click", async () => {
+    const ready = axes.filter((a) => a.chosen);
+    if (!ready.length) { toast("Choose a setting to optimise", true); return; }
+    if (ready.some((a) => !a.values.length)) { toast("Fill in the values for each setting", true); return; }
+    if (combos() > comboCap()) { toast(note.textContent, true); return; }
+    const data = await fetchData();
+    if (!data) return;
+    const chosenAxes = ready.map((a) => ({ ...a.chosen }));
+    const body = {
+      data, score, min_trades: minTrades, ...period.value(),
+      settings: ready.map((a) => ({ setting: a.chosen.kind === "knob" ? { kind: "knob", key: a.chosen.key } : { kind: "path", path: a.chosen.path }, values: a.values })),
+    };
+    run.disabled = true;
+    clear(out);
+    showProgress(null);
+    try {
+      const r = await POST("/optimise", body);
+      job = r.job;
+      poll(job, chosenAxes);
+    } catch (e) { finish(); clear(out).appendChild(h("p", { class: "error-box" }, e.message)); }
+  });
+
+  const scorePick = h("select", { "aria-label": "Rank by" }, SCORE_OPTIONS.map(([k, label]) => h("option", { value: k, selected: k === score ? "" : null }, label)));
+  scorePick.addEventListener("change", () => { score = scorePick.value; savePref("ta-opt-score", score); });
+  const pane = h("section", { class: "section" },
+    h("p", { class: "muted small tool-intro" }, "Tests every combination of up to three settings and ranks them. Runs in the background: you can stop it at any time."),
+    axesBox, addBtn,
+    h("div", { class: "inline" },
+      h("div", { class: "field" }, h("label", {}, "Rank by"), scorePick),
+      h("div", { class: "field" }, h("label", {}, "Needs at least"), h("div", { class: "inline" },
+        numberInput(minTrades, (n) => { minTrades = n; }, { label: "Minimum trades", min: 0, cls: "narrow", integer: true, allowEmpty: false }), h("span", { class: "small muted" }, "trades")))),
+    note, h("div", { class: "tool-actions" }, run), progress, out);
+  return { pane, out, refresh };
+}
+
+function renderOptimiser(res, axes, onApply) {
+  const box = h("div", { class: "optimiser" });
+  const rows = res.rows;
+  const scored = rows.filter((r) => r.score !== null && r.score !== undefined);
+  const label = (vals) => axes.map((a, i) => `${a.label} ${optionLabel(a, vals[i])}`).join(", ");
+  const scoreName = (SCORE_OPTIONS.find(([k]) => k === res.score) || [])[1] || "Score";
+  const fmtScore = (v) => res.score === "return" ? signed(v, "%") : num(v, 2);
+  if (!scored.length) {
+    box.appendChild(h("p", { class: "error-box" }, rows.length && rows.every((r) => r.error) ? "None of the combinations could be tested: " + rows[0].error
+      : "No combination made any trades in this period."));
+    return box;
+  }
+  const ranked = [...scored].sort((a, b) => (b.enough_trades - a.enough_trades) || (b.score - a.score));
+  const best = ranked[0];
+  const enough = ranked.filter((r) => r.enough_trades).length;
+  append(box, [
+    h("p", { class: "result-lede" }, `From ${day(res.start)} to ${day(res.end)}, ${res.tested.toLocaleString()} combinations were tested in ${res.seconds}s. The best ${scoreName.toLowerCase()} came from `,
+      h("strong", {}, label(best.values)), ` (${fmtScore(best.score)}, ${signed(best.return_pct, "%")} over ${best.trades} trades).`),
+    enough < scored.length ? h("p", { class: "muted small" }, `${scored.length - enough} of ${scored.length} combinations made fewer than ${res.min_trades} trades and are ranked below the rest: too few trades to trust.`) : null,
+    axes.length >= 2 ? heatmap(rows, axes, res, fmtScore) : null,
+  ]);
+  const shown = ranked.slice(0, 40);
+  const table = h("table", { class: "trades sweep-table" },
+    h("thead", {}, h("tr", {}, h("th", {}, "#"), axes.map((a) => h("th", {}, a.label)), h("th", { class: "num" }, scoreName), h("th", { class: "num" }, "Return"),
+      h("th", { class: "num" }, "Worst drop"), h("th", { class: "num" }, "Trades"), h("th", { class: "num" }, "Profit factor"), onApply ? h("th", {}) : null)),
+    h("tbody", {}, shown.map((r, i) => {
+      const isNow = axes.every((a, k) => a.current === r.values[k]);
+      return h("tr", { class: (isNow ? "current " : "") + (r.enough_trades ? "" : "muted") },
+        h("td", {}, String(i + 1)),
+        r.values.map((v, k) => h("td", {}, optionLabel(axes[k], v))),
+        h("td", { class: "num" }, fmtScore(r.score), r.enough_trades ? null : h("span", { class: "tag", title: `Fewer than ${res.min_trades} trades` }, "few")),
+        h("td", { class: "num " + (r.return_pct >= 0 ? "gain" : "loss") }, signed(r.return_pct, "%")),
+        h("td", { class: "num" }, num(r.max_drawdown_pct, 1) + "%"),
+        h("td", { class: "num" }, String(r.trades)),
+        h("td", { class: "num" }, r.profit_factor === null || r.profit_factor === undefined ? "–" : num(r.profit_factor, 2)),
+        onApply ? h("td", { class: "num" }, isNow ? h("span", { class: "tag" }, "now") : h("button", { type: "button", class: "quiet", onclick: (e) => {
+          onApply(axes, r.values);
+          e.target.closest("tbody").querySelectorAll("tr").forEach((tr) => tr.classList.remove("current"));
+          e.target.closest("tr").classList.add("current");
+          e.target.replaceWith(h("span", { class: "tag" }, "now"));
+        } }, "Apply settings")) : null);
+    })));
+  append(box, [
+    h("div", { class: "table-wrap" }, table),
+    ranked.length > shown.length ? h("p", { class: "small muted" }, `Showing the top ${shown.length} of ${ranked.length}.`) : null,
+    res.failed ? h("p", { class: "small muted" }, `${res.failed} combination${res.failed === 1 ? "" : "s"} couldn't be tested (invalid settings).`) : null,
+    h("p", { class: "notice" }, "Careful: the best of hundreds of combinations is almost always luckier than it looks, because you picked it after seeing the results. " +
+      "Prefer a combination whose neighbours in the grid also did well, then run the luck check on it before trusting it."),
+    res.notes && res.notes.length ? h("ul", { class: "warnings" }, res.notes.map((w) => h("li", {}, w))) : null]);
+  return box;
+}
+
+/** Best score for each pair of values of the first two settings (the best over any third setting). */
+function heatmap(rows, axes, res, fmtScore) {
+  const xs = [...new Set(rows.map((r) => r.values[0]))];
+  const ys = [...new Set(rows.map((r) => r.values[1]))];
+  if (xs.length < 2 || ys.length < 2 || xs.length * ys.length > 625) return null;
+  const cell = new Map();
+  for (const r of rows) {
+    if (r.score === null || r.score === undefined) continue;
+    const k = `${r.values[0]}|${r.values[1]}`;
+    if (!cell.has(k) || r.score > cell.get(k).score) cell.set(k, r);
+  }
+  const vals = [...cell.values()].map((r) => r.score);
+  const hi = Math.max(...vals), lo = Math.min(...vals);
+  const span = Math.max(hi, 0) - Math.min(lo, 0) || 1;
+  const tone = (v) => {
+    const p = Math.round(Math.min(1, Math.abs(v) / span) * 70) + 10;
+    return `background:color-mix(in srgb, var(${v >= 0 ? "--gain" : "--loss"}) ${p}%, transparent)`;
+  };
+  const sz = `width:${Math.max(2.2, Math.min(4, 28 / xs.length))}rem;height:1.6rem;text-align:center;font-size:11px;border:1px solid var(--line-soft)`;
+  const table = h("table", { class: "heatmap", style: "border-collapse:collapse;margin:.6rem 0" },
+    h("thead", {}, h("tr", {}, h("th", { class: "small muted", style: "text-align:right;padding-right:.4rem" }, `${axes[1].label} ↓ ${axes[0].label} →`),
+      xs.map((x) => h("th", { class: "small muted", style: sz }, optionLabel(axes[0], x))))),
+    h("tbody", {}, ys.map((y) => h("tr", {}, h("th", { class: "small muted", style: "text-align:right;padding-right:.4rem" }, optionLabel(axes[1], y)),
+      xs.map((x) => {
+        const r = cell.get(`${x}|${y}`);
+        const isBest = r && res.best && r.values[0] === res.best[0] && r.values[1] === res.best[1];
+        return h("td", { style: sz + (r ? ";" + tone(r.score) : "") + (isBest ? ";outline:2px solid var(--ink)" : ""),
+          title: r ? `${axes[0].label} ${optionLabel(axes[0], x)}, ${axes[1].label} ${optionLabel(axes[1], y)}: ${fmtScore(r.score)}, ${r.trades} trades` : "Not tested" },
+          r ? (r.enough_trades ? fmtScore(r.score) : "·") : "");
+      })))));
+  return h("div", { class: "table-wrap" }, table, h("p", { class: "small muted" },
+    `Each cell is the best ${axes.length > 2 ? "over the third setting " : ""}for that pair. Greener is better; a dot means too few trades. Look for a green area, not a lone bright cell.`));
 }
 
 function optionLabel(setting, v) {

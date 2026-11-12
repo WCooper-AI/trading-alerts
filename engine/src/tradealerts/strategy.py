@@ -147,8 +147,10 @@ class Strategy:
 
         return max(WARMUP_CANDLES, self.lookback_candles)
 
-    def prepare(self, df: pd.DataFrame) -> Prepared:
-        ctx = rules.Context(df)
+    def prepare(self, df: pd.DataFrame, ctx: "rules.Context | None" = None) -> Prepared:
+        """Pass ``ctx`` to share one indicator cache across several strategies on the same data."""
+        if ctx is None or ctx.df is not df:
+            ctx = rules.Context(df)
         entry = rules.evaluate(self._entry, df, ctx).to_numpy()
         exit_ = (
             rules.evaluate(self._exit, df, ctx).to_numpy()

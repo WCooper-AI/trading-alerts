@@ -56,7 +56,8 @@ def warmup_days(timeframe: str, candles: int = WARMUP_CANDLES) -> int:
 
 
 def run_backtest(strategy: Strategy, df: pd.DataFrame, fine: pd.DataFrame | None = None,
-                 notes: list[str] | None = None, start: pd.Timestamp | None = None) -> BacktestResult:
+                 notes: list[str] | None = None, start: pd.Timestamp | None = None,
+                 ctx=None) -> BacktestResult:
     """Simulate ``strategy`` over ``df``.
 
     With ``start``, candles before it are only used to warm up indicators; trading
@@ -65,7 +66,7 @@ def run_backtest(strategy: Strategy, df: pd.DataFrame, fine: pd.DataFrame | None
     if df.empty:
         raise ValueError("No price data to backtest on")
     bar = timeframes.to_timedelta(strategy.market.timeframe)
-    prepared = strategy.prepare(df)  # on the full history, so indicators are warmed up
+    prepared = strategy.prepare(df, ctx)  # on the full history, so indicators are warmed up
     first = 0
     if start is not None:
         first = int(np.searchsorted(df.index.as_unit("ns").asi8, pd.Timestamp(start).value, "left"))

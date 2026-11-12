@@ -1,17 +1,18 @@
-"""Testing tools: backtest, compare settings (sweep), luck check, strategies together."""
+"""Testing tools: backtest, compare settings (sweep), optimiser, luck check, strategies together."""
 
 from __future__ import annotations
 
 import copy
+import os
 
 from fastapi import APIRouter, Body, Depends, Request
 
-from ... import __version__, compute, versions
+from ... import __version__, analysis, compute, versions
 from ...jobs import Busy
 from ...recipes import RecipeError, build_strategy
 from ...strategy import ID_RE, read_raw, strategy_from_dict
 from ...workspace import Workspace
-from ..common import CURRENCY_SYMBOLS, ctx_of, err, workspace
+from ..common import CURRENCY_SYMBOLS, clean, ctx_of, err, workspace
 from ..prices import load_period
 from ..strategy_io import load, now_iso, strategy_path, validate
 
@@ -103,33 +104,53 @@ def set_path(data: dict, path: list, value) -> None:
         err(422, "That setting isn't in this strategy any more")
 
 
-def sweep_variants(data: dict, setting: dict, values: list) -> list:
-    """(value, strategy dict or error text) for each value of one setting."""
+def check_setting(setting: dict) -> None:
     kind = setting.get("kind")
     if kind not in ("knob", "path"):
         err(422, "Choose a setting to test")
     path = setting.get("path")
     if kind == "path" and (not isinstance(path, list) or not path or len(path) > 12):
         err(422, "Choose a setting to test")
+
+
+def apply_setting(d: dict, setting: dict, v):
+    """Set one setting to ``v`` in strategy dict ``d`` (in place). Returns an error message for
+    a value the recipe rejects, else None."""
+    if setting.get("kind") == "knob":
+        r = d.get("recipe") or {}
+        settings = dict(r.get("settings") or {})
+        settings[str(setting.get("key"))] = v
+        try:
+            built = build_strategy(str(r.get("id", "")), str(r.get("market", "")), settings)
+        except RecipeError as exc:
+            return str(exc)
+        for k in ("direction", "entry", "exit", "recipe"):
+            d[k] = built[k]
+        d["market"] = {**(d.get("market") or {}), "timeframe": built["market"]["timeframe"]}
+    else:
+        set_path(d, setting.get("path"), v)
+    return None
+
+
+def sweep_variants(data: dict, setting: dict, values: list) -> list:
+    """(value, strategy dict or error text) for each value of one setting."""
+    check_setting(setting)
     out = []
     for v in values:
         d = copy.deepcopy(data)
-        if kind == "knob":
-            r = d.get("recipe") or {}
-            settings = dict(r.get("settings") or {})
-            settings[str(setting.get("key"))] = v
-            try:
-                built = build_strategy(str(r.get("id", "")), str(r.get("market", "")), settings)
-            except RecipeError as exc:
-                out.append((v, str(exc)))
-                continue
-            for k in ("direction", "entry", "exit", "recipe"):
-                d[k] = built[k]
-            d["market"] = {**(d.get("market") or {}), "timeframe": built["market"]["timeframe"]}
-        else:
-            set_path(d, path, v)
-        out.append((v, d))
+        problem = apply_setting(d, setting, v)
+        out.append((v, problem if problem else d))
     return out
+
+
+def check_values(values) -> None:
+    if not isinstance(values, list) or not values:
+        err(422, "Give at least one value for each setting")
+    if len(values) > MAX_SWEEP:
+        err(422, f"Compare at most {MAX_SWEEP} values of one setting. Use a bigger step.")
+    for v in values:
+        if isinstance(v, bool) or not isinstance(v, (int, float, str)):
+            err(422, "Values must be numbers or options")
 
 
 @router.post("/api/sweep")
@@ -138,11 +159,7 @@ def sweep_settings(request: Request, body: dict = Body(...), ws: Workspace = Dep
     values = body.get("values")
     if not isinstance(values, list) or len(values) < 2:
         err(422, "Give at least two values to compare")
-    if len(values) > MAX_SWEEP:
-        err(422, f"Compare at most {MAX_SWEEP} values at once. Use a bigger step.")
-    for v in values:
-        if not isinstance(v, (int, float, str, bool)):
-            err(422, "Values must be numbers or options")
+    check_values(values)
     variants = sweep_variants(body["data"], body.get("setting") or {}, values)
     warmup = s.warmup_candles  # enough history for the variant with the longest indicators
     for _, d in variants:
@@ -186,3 +203,84 @@ def portfolio(request: Request, body: dict = Body(...), ws: Workspace = Depends(
         err(422, "These strategies use different currencies. Choose ones in the same currency.")
     sym = CURRENCY_SYMBOLS.get(currencies.pop(), "")
     return _run(request, ws, compute.portfolio, parts, float(balance), sym, notes)
+
+
+# --------------------------------------------------------------------------- optimiser
+
+
+def combos_cap(ctx) -> int:
+    return analysis.MAX_COMBOS.get(getattr(ctx, "edition", "cloud"), analysis.MAX_COMBOS["cloud"])
+
+
+def optimiser_variants(data: dict, settings: list[dict], combos: list[tuple]) -> list:
+    """(values, strategy dict or error text) for each combination; settings are applied in order."""
+    out = []
+    for values in combos:
+        d = copy.deepcopy(data)
+        problem = None
+        for setting, v in zip(settings, values):
+            problem = apply_setting(d, setting["setting"], v)
+            if problem:
+                break
+        out.append((values, problem if problem else d))
+    return out
+
+
+@router.post("/api/optimise")
+def optimise(request: Request, body: dict = Body(...), ws: Workspace = Depends(workspace)):
+    """Start an optimiser run in the background. Returns ``{"job": id}``; poll ``GET /api/jobs/{id}``."""
+    ctx = ctx_of(request)
+    s = validate(ws, body.get("data"))
+    settings = body.get("settings")
+    if not isinstance(settings, list) or not settings:
+        err(422, "Choose at least one setting to optimise")
+    if len(settings) > analysis.MAX_OPT_SETTINGS:
+        err(422, f"Optimise at most {analysis.MAX_OPT_SETTINGS} settings at once")
+    axes = []
+    for item in settings:
+        if not isinstance(item, dict):
+            err(422, "Choose a setting to test")
+        check_setting(item.get("setting") or {})
+        check_values(item.get("values"))
+        axes.append(list(item["values"]))
+    score = body.get("score") or "return"
+    if score not in analysis.SCORES:
+        err(422, "Choose how to rank the results")
+    min_trades = body.get("min_trades", analysis.MIN_TRADES)
+    if isinstance(min_trades, bool) or not isinstance(min_trades, int) or min_trades < 0:
+        err(422, "The minimum number of trades must be a whole number")
+    try:
+        combos = analysis.grid(axes, combos_cap(ctx))
+    except ValueError as exc:
+        err(422, str(exc))
+    variants = optimiser_variants(body["data"], settings, combos)
+    warmup = s.warmup_candles  # enough history for the variant with the longest indicators, per setting
+    for item in settings:
+        for v, d in sweep_variants(body["data"], item["setting"], item["values"]):
+            try:
+                warmup = max(warmup, strategy_from_dict(copy.deepcopy(d)).warmup_candles) if isinstance(d, dict) else warmup
+            except Exception:  # an invalid variant is reported by the optimiser itself
+                pass
+    df, fine, test_start, notes = load_period(ctx, ws, s, body, warmup=warmup)
+    workers = max(1, os.cpu_count() or 1) if ctx.edition == "selfhost" else 1
+    extra = {"notes": notes, "currency": s.risk.symbol, "combinations": len(combos)}
+    try:
+        job = ctx.jobs.start(ws.owner, analysis.optimise, variants, df, fine, test_start, score, int(min_trades), workers, extra)
+    except Busy as exc:
+        err(429, str(exc))
+    return {"job": job, "combinations": len(combos)}
+
+
+@router.get("/api/jobs/{job_id}")
+def job_status(request: Request, job_id: str, ws: Workspace = Depends(workspace)):
+    st = ctx_of(request).jobs.status(ws.owner, job_id)
+    if st is None:
+        err(404, "That run has finished and been cleared, or never existed")
+    return clean(st)
+
+
+@router.post("/api/jobs/{job_id}/cancel")
+def job_cancel(request: Request, job_id: str, ws: Workspace = Depends(workspace)):
+    if not ctx_of(request).jobs.cancel(ws.owner, job_id):
+        err(404, "That run has finished and been cleared, or never existed")
+    return {"ok": True}

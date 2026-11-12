@@ -1,6 +1,7 @@
 """Checks that go beyond a single backtest.
 
 * ``sweep``: run the same rules with one setting changed to each of several values.
+* ``optimise``: every combination of up to three settings, ranked by a chosen score.
 * ``luck_check``: is a backtest's result likely to be luck? Ported from the CLI research
   scripts: resample the trades, check both halves of the period, and run the same rules
   on random price paths with the same volatility.
@@ -573,3 +574,156 @@ def trade_window_ranges(backtest: pd.DataFrame, live: list[dict] | pd.DataFrame,
                              "position": _position(lv_v, low, high)}
     out["live"] = live_m
     return out
+
+
+# --------------------------------------------------------------------------- optimiser
+
+
+MAX_OPT_SETTINGS = 3
+MAX_COMBOS = {"selfhost": 2000, "cloud": 200}
+SCORES = ("return", "return_dd", "profit_factor", "sharpe")
+
+
+def combo_count(axes: list[list]) -> int:
+    n = 1
+    for values in axes:
+        n *= len(values)
+    return n
+
+
+def grid(axes: list[list], cap: int) -> list[tuple]:
+    """Every combination of the values in ``axes`` (the cross product), in order.
+    Raises ``ValueError`` when there are no values, too many settings, or more than ``cap`` combinations."""
+    import itertools
+
+    if not axes or any(not isinstance(v, list) or not v for v in axes):
+        raise ValueError("Give at least one value for each setting")
+    if len(axes) > MAX_OPT_SETTINGS:
+        raise ValueError(f"Optimise at most {MAX_OPT_SETTINGS} settings at once")
+    n = combo_count(axes)
+    if n > cap:
+        raise ValueError(f"That's {n:,} combinations; this edition runs at most {cap:,} in one go. Use bigger steps or fewer values.")
+    return list(itertools.product(*axes))
+
+
+def score_of(row: dict, score: str) -> float | None:
+    """The number a combination is ranked by. ``None`` when it can't be worked out."""
+    if row.get("error") or not row.get("trades"):
+        return None
+    if score == "return_dd":
+        dd = row.get("max_drawdown_pct") or 0.0
+        return row["return_pct"] / dd if dd > 0 else (row["return_pct"] if row["return_pct"] > 0 else None)
+    if score == "profit_factor":
+        pf = row.get("profit_factor")
+        return None if pf is None else float(pf)
+    if score == "sharpe":
+        return row.get("sharpe")
+    return row.get("return_pct")
+
+
+def _sharpe(trades: pd.DataFrame) -> float | None:
+    """Per-trade Sharpe scaled to the number of trades: how steady the profits were."""
+    if len(trades) < 2:
+        return None
+    pnl = trades["pnl"].to_numpy(dtype=float)
+    sd = float(pnl.std(ddof=1))
+    return float(pnl.mean() / sd * np.sqrt(len(pnl))) if sd > 0 else None
+
+
+def run_chunk(df: pd.DataFrame, fine: pd.DataFrame | None, start: pd.Timestamp | None,
+              items: list[tuple[tuple, dict | str]]) -> list[dict]:
+    """Backtest each (values, strategy dict). Every strategy in the chunk shares one indicator
+    cache, so an indicator that several combinations use is computed once."""
+    import copy
+
+    from . import rules
+    from .strategy import check_runtime, strategy_from_dict
+
+    ctx = rules.Context(df)
+    rows = []
+    for values, d in items:
+        row = {"values": list(values), "error": None}
+        if isinstance(d, str):
+            rows.append({**row, "error": d})
+            continue
+        try:
+            s = strategy_from_dict(copy.deepcopy(d))
+            check_runtime(s)
+            res = run_backtest(s, df, fine, start=start, ctx=ctx)
+        except Exception as exc:  # noqa: BLE001 - an invalid combination is that row's error
+            rows.append({**row, "error": str(exc)})
+            continue
+        rows.append({**row, **summary(res), "sharpe": _sharpe(res.trades)})
+    return rows
+
+
+def _chunks(items: list, workers: int) -> list[list]:
+    size = max(1, min(20, -(-len(items) // max(1, workers * 6))))
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+def optimise(progress, variants: list[tuple[tuple, dict | str]], df: pd.DataFrame, fine: pd.DataFrame | None,
+             start: pd.Timestamp | None, score: str = "return", min_trades: int = MIN_TRADES, workers: int = 1,
+             extra: dict | None = None) -> dict:
+    """Backtest every combination and rank them by ``score``.
+
+    ``progress`` is a ``jobs.Progress`` (or None). With ``workers`` > 1 the chunks run in a
+    process pool (self-hosted); otherwise one after another in this process (hosted, where
+    the job already has its own worker). Cancelling stops after the current chunk.
+    """
+    from .jobs import Cancelled
+
+    if score not in SCORES:
+        raise ValueError("Choose how to rank the results")
+    t0 = time.time()
+    total = len(variants)
+    chunks = _chunks(variants, workers)
+    workers = min(workers, len(chunks))
+    rows: list[dict] = []
+
+    def tick(done: int):
+        if progress is not None:
+            progress.update(done, total, f"{done:,} of {total:,} combinations tested")
+            progress.check()
+
+    tick(0)
+    if workers <= 1:
+        for chunk in chunks:
+            rows += run_chunk(df, fine, start, chunk)
+            tick(len(rows))
+    else:
+        import multiprocessing
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+
+        pool = ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("spawn"))
+        try:
+            futures = [pool.submit(run_chunk, df, fine, start, chunk) for chunk in chunks]
+            for fut in as_completed(futures):
+                rows += fut.result()
+                try:
+                    tick(len(rows))
+                except Cancelled:
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    raise
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+
+    by_values = {tuple(r["values"]): r for r in rows}
+    rows = [by_values[tuple(v)] for v, _ in variants]  # back in grid order
+    for r in rows:
+        r["score"] = score_of(r, score)
+        r["enough_trades"] = bool(not r["error"] and r.get("trades", 0) >= min_trades)
+    ranked = sorted((r for r in rows if r["score"] is not None), key=lambda r: (r["enough_trades"], r["score"]), reverse=True)
+    best = ranked[0] if ranked else None
+    return {
+        "rows": rows,
+        "best": best["values"] if best else None,
+        "score": score,
+        "min_trades": min_trades,
+        "tested": sum(1 for r in rows if not r["error"]),
+        "failed": sum(1 for r in rows if r["error"]),
+        "seconds": round(time.time() - t0, 1),
+        "start": str(df.index[0] if start is None else max(df.index[0], start)),
+        "end": str(df.index[-1]),
+        **(extra or {}),
+    }
