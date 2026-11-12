@@ -13,6 +13,17 @@ function groupKind(c) {
   if (isObj(c.not) && Array.isArray(c.not.all)) return "notall";
   return null;
 }
+/** A single condition wrapped in {not: ...} (rules.py supports it; shown as a row with a "not" switch). */
+function isNegatedLeaf(c) {
+  return isObj(c) && !groupKind(c) && isObj(c.not) && !groupKind(c.not) && Object.keys(c).length === 1;
+}
+/** The leaf itself, whether or not it is wrapped in {not: ...}. */
+function leafOf(c) { return isNegatedLeaf(c) ? c.not : c; }
+/** True for leaf shapes the builder has inputs for; anything else is kept as a read-only card. */
+function editableLeaf(c) {
+  const x = leafOf(c);
+  return isObj(x) && Boolean("left" in x || x.time_between || x.weekdays || x.avoid_news);
+}
 function groupItems(c) {
   const k = groupKind(c);
   if (k === "all") return c.all;
@@ -42,7 +53,7 @@ function newComparison() {
  * Editor for a group of conditions.
  * get/set read and replace the group in its parent; onChange tells the page something changed.
  */
-function groupEditor(get, set, onChange, depth = 0, onRemove = null) {
+function groupEditor(get, set, onChange, depth = 0, onRemove = null, pos = null) {
   const wrap = h("div", { class: depth ? "group nested" : "group" });
   function render() {
     clear(wrap);
@@ -60,14 +71,21 @@ function groupEditor(get, set, onChange, depth = 0, onRemove = null) {
     mode.value = kind;
     append(wrap, [h("div", { class: "group-head" },
       h("span", { class: "word" }, depth ? "A group where" : "When"), mode,
+      moveButtons(pos, "group"),
       onRemove ? h("button", { class: "quiet icon remove", type: "button", "aria-label": "Remove group", title: "Remove group",
         onclick: () => { onRemove(); } }, "✕") : null)]);
     items.forEach((item, i) => {
       const getItem = () => groupItems(get())[i];
       const setItem = (v) => { groupItems(get())[i] = v; };
       const remove = () => { groupItems(get()).splice(i, 1); onChange(); render(); };
-      if (groupKind(item)) wrap.appendChild(groupEditor(getItem, setItem, onChange, depth + 1, remove));
-      else wrap.appendChild(conditionRow(getItem, setItem, onChange, remove));
+      const move = (d) => {
+        const arr = groupItems(get()), j = i + d;
+        if (j < 0 || j >= arr.length) return;
+        [arr[i], arr[j]] = [arr[j], arr[i]]; onChange(); render();
+      };
+      const pos = { move, first: i === 0, last: i === items.length - 1 };
+      if (groupKind(item)) wrap.appendChild(groupEditor(getItem, setItem, onChange, depth + 1, remove, pos));
+      else wrap.appendChild(conditionRow(getItem, setItem, onChange, remove, pos));
     });
     const add = (v) => { groupItems(get()).push(v); onChange(); render(); };
     append(wrap, [h("div", { class: "adders" },
@@ -85,9 +103,38 @@ function groupEditor(get, set, onChange, depth = 0, onRemove = null) {
 
 const NEWS_CURRENCIES = ["USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD", "CNY"];
 
-function conditionRow(get, set, onChange, onRemove) {
+/** Up/down buttons for a row or group; null when there is nowhere to move. */
+function moveButtons(pos, what) {
+  if (!pos || (pos.first && pos.last)) return null;
+  return h("span", { class: "move" },
+    h("button", { class: "quiet icon", type: "button", disabled: pos.first, "aria-label": `Move ${what} up`, title: "Move up",
+      onclick: () => pos.move(-1) }, "▲"),
+    h("button", { class: "quiet icon", type: "button", disabled: pos.last, "aria-label": `Move ${what} down`, title: "Move down",
+      onclick: () => pos.move(1) }, "▼"));
+}
+
+function conditionRow(getRaw, setRaw, onChange, onRemove, pos = null) {
   const row = h("div", { class: "cond" });
   const body = h("div", { class: "body" });
+  const raw = getRaw();
+  if (!editableLeaf(raw)) {
+    // Anything the builder has no inputs for (custom YAML) is kept exactly as written.
+    append(body, [h("span", { class: "muted" }, "Custom rule (edit it in YAML; kept as written):"),
+      h("code", { class: "custom-card" }, JSON.stringify(raw))]);
+    append(row, [body, moveButtons(pos, "condition"), h("button", { class: "quiet icon remove", type: "button",
+      "aria-label": "Remove condition", title: "Remove", onclick: onRemove }, "✕")]);
+    return row;
+  }
+  const negated = isNegatedLeaf(raw);
+  const get = negated ? () => getRaw().not : getRaw;
+  const set = negated ? (v) => { getRaw().not = v; } : setRaw;
+  const notBtn = h("button", { class: "quiet not-toggle", type: "button", "aria-pressed": String(negated),
+    title: negated ? "Switch back to a plain condition" : "Require this to be false", onclick: () => {
+      setRaw(negated ? getRaw().not : { not: getRaw() });
+      onChange();
+      row.replaceWith(conditionRow(getRaw, setRaw, onChange, onRemove, pos));
+    } }, negated ? "not" : "not?");
+  body.appendChild(notBtn);
   const c = get();
   if ("left" in c) {
     const op = choiceSelect(Object.entries(OP_WORDS), c.op, (v) => { get().op = v; onChange(); }, { label: "Comparison" });
@@ -130,11 +177,9 @@ function conditionRow(get, set, onChange, onRemove) {
       numberInput(n.after, (v) => { get().avoid_news.after = v; onChange(); }, { label: "Minutes after", step: "1", min: "0", integer: true, cls: "narrow" }),
       h("span", { class: "word" }, "min after high-impact news for"), cur,
       infoTip("Skips signals near scheduled high-impact news (like the US jobs report or interest rate decisions) for the currencies you pick. Settings, News calendar shows what's included.")]);
-  } else {
-    body.appendChild(h("span", { class: "muted" }, "This rule type can only be edited in the YAML file."));
   }
-  append(row, [body, h("button", { class: "quiet icon remove", type: "button", "aria-label": "Remove condition",
-    title: "Remove", onclick: onRemove }, "✕")]);
+  append(row, [body, moveButtons(pos, "condition"), h("button", { class: "quiet icon remove", type: "button",
+    "aria-label": "Remove condition", title: "Remove", onclick: onRemove }, "✕")]);
   return row;
 }
 

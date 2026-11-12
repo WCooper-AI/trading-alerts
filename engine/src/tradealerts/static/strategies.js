@@ -234,14 +234,18 @@ async function viewEditor(id, exampleName, preloaded, run) {
   } else data = clone(BLANK);
 
   // normalise for editing
-  data.entry = asGroup(data.entry);
-  data.exit = data.exit || {};
-  if (data.exit.when) data.exit.when = asGroup(data.exit.when);
-  data.market = data.market || {};
-  data.risk = data.risk || {};
-  data.costs = data.costs || {};
-  data.alerts = data.alerts || {};
-  if (!isNew && data.exit.target === undefined) data.exit.target = null; // saved without a target: "No target"
+  function normalise(d) {
+    d.entry = asGroup(d.entry);
+    d.exit = d.exit || {};
+    if (d.exit.when) d.exit.when = asGroup(d.exit.when);
+    d.market = d.market || {};
+    d.risk = d.risk || {};
+    d.costs = d.costs || {};
+    d.alerts = d.alerts || {};
+    if (!isNew && d.exit.target === undefined) d.exit.target = null; // saved without a target: "No target"
+    return d;
+  }
+  normalise(data);
 
   let dirty = isNew;
   const summary = h("div");
@@ -344,18 +348,69 @@ async function viewEditor(id, exampleName, preloaded, run) {
       h("div", { class: "inline" }, dupBtn, isNew ? null : historyLink(id), isNew ? null : shareButtons(id, exportData), deleteBtn, saveBtn)),
     summary, validity);
 
+  // ----- "Count signals on past data" badge (entry section)
+  const signalBadge = h("span", { class: "signal-badge muted", "aria-live": "polite" });
+  async function countSignals() {
+    const d = testable();
+    if (!d) return;
+    signalBadge.textContent = "Counting…";
+    try {
+      const r = await POST("/signals/count", { data: d });
+      const span = r.start && r.end ? ` between ${r.start.slice(0, 10)} and ${r.end.slice(0, 10)}` : "";
+      signalBadge.textContent = `${r.signals} signal${r.signals === 1 ? "" : "s"} on ${r.candles} candles${span}.`;
+    } catch (e) { signalBadge.textContent = "Couldn't count: " + e.message; }
+  }
+
+  // ----- Advanced: edit the strategy as YAML (kept in sync with the builder)
+  let yamlOpen = false, yamlTimer, yamlSeq = 0;
+  const yamlBox = h("textarea", { class: "yaml-box", spellcheck: "false", "aria-label": "Strategy as YAML" });
+  const yamlNote = h("p", { class: "validity", "aria-live": "polite" });
+  const yamlWrap = h("div", { class: "yaml-wrap", hidden: true },
+    h("p", { class: "section-note" }, "Everything the builder shows, as the file it saves. Changes here update the builder once they read as a valid strategy."),
+    yamlBox, yamlNote);
+  async function refreshYaml() {
+    if (!yamlOpen) return;
+    try { yamlBox.value = (await POST("/yaml", { data: exportData() })).yaml; yamlNote.className = "validity"; yamlNote.textContent = ""; }
+    catch (e) { yamlNote.className = "validity bad"; yamlNote.textContent = e.message; }
+  }
+  async function applyYaml() {
+    const seq = ++yamlSeq;
+    let r;
+    try { r = await POST("/yaml/parse", { yaml: yamlBox.value }); } catch (e) { r = { ok: false, error: e.message }; }
+    if (seq !== yamlSeq) return;
+    yamlNote.className = "validity " + (r.ok ? "ok" : "bad");
+    yamlNote.textContent = r.ok ? "Rules check out. Builder updated." : r.error;
+    if (!r.ok) return;
+    for (const k of Object.keys(data)) delete data[k];
+    Object.assign(data, normalise(r.data));
+    title.value = data.name || "";
+    rerender();
+    changed();
+  }
+  yamlBox.addEventListener("input", () => { clearTimeout(yamlTimer); yamlTimer = setTimeout(applyYaml, 600); });
+  const yamlToggle = h("button", { type: "button", class: "quiet", "aria-expanded": "false", onclick: () => {
+    yamlOpen = !yamlOpen;
+    yamlWrap.hidden = !yamlOpen;
+    yamlToggle.setAttribute("aria-expanded", String(yamlOpen));
+    yamlToggle.textContent = yamlOpen ? "Hide YAML" : "Advanced: Edit YAML";
+    refreshYaml();
+  } }, "Advanced: Edit YAML");
+
   // ----- sections
   const left = h("div", { class: "panel" });
   function rerender() {
     clear(left);
     const jump = h("nav", { class: "section-nav", "aria-label": "Sections" });
+    const onEdit = () => { changed(); if (yamlOpen) { clearTimeout(yamlTimer); yamlTimer = setTimeout(refreshYaml, 300); } };
     append(left, [jump,
-      marketSection(data, changed),
+      marketSection(data, onEdit),
       h("section", { class: "section" }, h("h2", {}, "Entry"),
         h("p", { class: "section-note" }, "Checked when each candle closes. If the rules are true, you get an alert and a paper trade opens at the next candle's open."),
-        groupEditor(() => data.entry, (v) => { data.entry = v; }, changed)),
-      exitSection(data, changed),
-      riskSection(data, changed)]);
+        h("div", { class: "inline" }, h("button", { type: "button", onclick: countSignals }, "Count signals on past data"), signalBadge),
+        groupEditor(() => data.entry, (v) => { data.entry = v; }, onEdit)),
+      exitSection(data, onEdit),
+      riskSection(data, onEdit),
+      h("section", { class: "section" }, h("h2", {}, "Advanced"), yamlToggle, yamlWrap)]);
     left.querySelectorAll(":scope > section").forEach((sec, i) => {
       const title = sec.querySelector("h2");
       if (!title) return;
@@ -363,13 +418,12 @@ async function viewEditor(id, exampleName, preloaded, run) {
       jump.appendChild(h("a", { href: "#", onclick: (e) => { e.preventDefault(); sec.scrollIntoView({ behavior: "smooth", block: "start" }); } }, title.textContent));
     });
   }
-  rerender();
-
   const testable = () => {
     const missing = stillToChoose(data);
     if (missing.length) { toast("Still to choose: " + missing.join(", "), true); return null; }
     return exportData();
   };
+  rerender();
   const right = h("div", { class: "side" }, analysisPanel({
     getData: testable, render: renderBacktest, strategyId: isNew ? null : id,
     intro: "Tests the rules as they are on screen, including unsaved changes, on the market's price history.",

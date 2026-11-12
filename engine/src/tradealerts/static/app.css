@@ -1424,3 +1424,13 @@ button.tile:hover { background: var(--glass-thin); }
   .candle-top .candle-readout { flex-basis: 100%; order: 9; }
 }
 
+
+/* rule builder: reordering, negation and custom-rule cards (0.3 session 6) */
+.cond > .move, .group-head .move { display: inline-flex; gap: .1rem; }
+.cond > .move { margin-left: auto; }
+.cond > .move + .remove { margin-left: 0; }
+.not-toggle { font-size: var(--step--1); padding: .2rem .5rem; }
+.not-toggle[aria-pressed="true"] { font-weight: 600; text-decoration: underline; }
+.custom-card { display: block; white-space: pre-wrap; word-break: break-all; font-size: var(--step--1); padding: .3rem .5rem; opacity: .85; }
+.yaml-box { width: 100%; min-height: 18rem; font-family: ui-monospace, monospace; font-size: var(--step--1); tab-size: 2; }
+.signal-badge { font-size: var(--step--1); }

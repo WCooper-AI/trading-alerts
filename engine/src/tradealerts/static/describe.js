@@ -91,6 +91,7 @@ function describeCondition(c, nested = false) {
     else body = ["not all of: ", ...joinParts(items, "and")];
     return nested && items.length > 1 ? ["(", ...body, ")"] : body;
   }
+  if (isNegatedLeaf(c)) return ["it's not true that ", ...describeCondition(c.not, true)];
   if ("left" in c && isObj(c.left) && typeof c.right === "number" && !c.left.shift && (c.left.scale ?? 1) === 1 && !c.left.add) {
     const L = c.left;
     if (L.indicator === "pct_from_high" && ["<", "<="].includes(c.op) && c.right <= 0)
