@@ -12,7 +12,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import Response
 
 from ... import indicators, rules
-from ...recipes import MARKETS, RECIPES, RecipeError, build_strategy, still_matches_recipe
+from ...recipes import MARKETS, RECIPES, RecipeError, build_strategy, preview_strategy, still_matches_recipe
 from ...strategy import (ID_RE, StrategyError, dump_strategy, load_strategy, read_raw, strategy_files,
                          upgrade_legacy_market)
 from ...workspace import Workspace
@@ -90,6 +90,15 @@ def example(name: str):
 @router.get("/api/recipes")
 def recipes():
     return {"recipes": [r.public() for r in RECIPES], "markets": MARKETS}
+
+
+@router.post("/api/recipes/preview")
+def preview_recipe(body: dict = Body(...)):
+    """The sentence-while-you-type version of a guided strategy: blanks stay blank."""
+    try:
+        return clean(preview_strategy(str(body.get("recipe", "")), str(body.get("market", "")), body.get("settings") or {}))
+    except RecipeError as exc:
+        err(422, str(exc))
 
 
 @router.post("/api/recipes/build")

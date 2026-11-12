@@ -258,11 +258,21 @@ async function viewCreate(preset) {
     const recipe = recipeById(st.recipe);
     const miss = recipe ? missingSettings(recipe, st.settings) : [];
     if (miss.length) {
-      buildSeq++;
+      const seq = ++buildSeq;
       st.built = null;
-      clear(sentence).appendChild(h("p", { class: "sentence placeholder-sentence" }, "Fill in the settings and the rules appear here in plain English."));
       problem.className = "validity todo";
       problem.textContent = "Still to fill in: " + miss.join(", ") + ".";
+      // the sentence appears straight away, with gaps that fill in as each setting is chosen
+      buildTimer = setTimeout(async () => {
+        try {
+          const pv = await POST("/recipes/preview", { recipe: st.recipe, market: st.market, settings: st.settings });
+          if (seq !== buildSeq) return;
+          clear(sentence).appendChild(renderParts(markBlanks(describeStrategy(pv.data), pv.placeholders)));
+        } catch (_) {
+          if (seq !== buildSeq) return;
+          clear(sentence).appendChild(h("p", { class: "sentence placeholder-sentence" }, "Fill in the settings and the rules appear here in plain English."));
+        }
+      }, 250);
       return;
     }
     buildTimer = setTimeout(rebuildNow, 250);

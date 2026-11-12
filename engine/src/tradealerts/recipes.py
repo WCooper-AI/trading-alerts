@@ -458,3 +458,41 @@ def still_matches_recipe(data: dict) -> bool:
     # strategies saved before markets followed the Price data setting
     market = MARKETS_BY_KEY.get(r.get("market", ""), {})
     return m.get("provider") == "yahoo" and m.get("symbol") == market.get("symbol")
+
+
+def preview_strategy(recipe_id: str, market_key: str, settings: dict) -> dict:
+    """The strategy as far as it's been filled in, for the plain-English sentence while someone is
+    still choosing. Blank knobs are stood in for by their example values so the rules can be built,
+    and those stand-in values are listed in ``placeholders`` so the sentence can show them as gaps.
+    Account, direction and candle size are left out when blank; the sentence has its own gaps for them."""
+    recipe = RECIPES_BY_ID.get(recipe_id)
+    if not recipe:
+        raise RecipeError(f"Unknown idea {recipe_id!r}")
+    given = dict(settings or {})
+    placeholders: list[Any] = []
+    blank_base = []
+    for knob in recipe.all_knobs():
+        if knob["kind"] == "toggle" or not _blank(given.get(knob["key"])):
+            continue
+        ex = knob.get("example")
+        if ex is None:
+            continue  # optional and blank: stays out of the rules
+        given[knob["key"]] = ex
+        placeholders.append(STOPS[ex] if knob["key"] == "stop" else TARGETS[ex] if knob["key"] == "target" else ex)
+    for key, fallback in (("direction", "long"), ("timeframe", recipe.default_timeframe), ("balance", 1000),
+                          ("risk_pct", 1), ("currency", "GBP")):
+        if _blank(given.get(key)):
+            given[key] = fallback
+            blank_base.append(key)
+    data = build_strategy(recipe_id, market_key, given)
+    if "direction" in blank_base:
+        data.pop("direction", None)
+        data["name"] = f"{recipe.name} on {data['market']['label']}"
+    if "timeframe" in blank_base:
+        data["market"].pop("timeframe", None)
+    for key, field_ in (("balance", "account_size"), ("risk_pct", "risk_per_trade_pct"), ("currency", "currency")):
+        if key in blank_base:
+            data["risk"].pop(field_, None)
+    data.pop("recipe", None)
+    return {"data": data, "placeholders": [p for p in placeholders if p is not None], "complete": not placeholders and not blank_base}
+

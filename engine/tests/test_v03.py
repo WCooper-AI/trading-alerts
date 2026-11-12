@@ -336,3 +336,20 @@ def test_strategy_list_spark_only_for_running_tests(client, ws):
     items = {x["id"]: x for x in client.get("/api/strategies").json()["strategies"]}
     assert "spark" in items[sid] and items[sid]["live"]["run"]["trades"] == 0
     assert "spark" not in items["draft-only"] and items["draft-only"]["live"] == {}
+
+
+def test_guided_preview_shows_gaps_until_filled(client):
+    from tradealerts.recipes import RECIPES, build_strategy, preview_strategy
+
+    for recipe in RECIPES:
+        market = "us500" if recipe.id != "orb" else "us100"
+        empty = preview_strategy(recipe.id, market, {})
+        assert empty["data"]["entry"] and "direction" not in empty["data"] and "account_size" not in empty["data"]["risk"]
+        assert not empty["complete"]
+        full = {k["key"]: k.get("example") for k in recipe.all_knobs() if k.get("example") is not None}
+        full.update(direction="long", timeframe=recipe.default_timeframe, balance=1000, risk_pct=1, currency="GBP")
+        done = preview_strategy(recipe.id, market, full)
+        built = build_strategy(recipe.id, market, full)
+        assert done["complete"] and done["placeholders"] == [] and done["data"]["entry"] == built["entry"]
+    r = client.post("/api/recipes/preview", json={"recipe": "rsi", "market": "uk100", "settings": {"level": 25}}, headers=H)
+    assert r.status_code == 200 and 25 not in r.json()["placeholders"] and r.json()["data"]["market"]["symbol"] == "uk100"

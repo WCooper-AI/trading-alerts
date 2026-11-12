@@ -150,6 +150,18 @@ function describeStrategy(d) {
   return parts;
 }
 
+/** Turn stand-in values (a preview's placeholders) back into gaps. Each placeholder blanks one match. */
+function markBlanks(parts, placeholders) {
+  const left = (placeholders || []).map((v) => short(v));
+  return parts.map((p) => {
+    if (typeof p === "string" || p.blank) return p;
+    const i = left.indexOf(p.m.replace(/[×%]/g, ""));
+    if (i < 0) return p;
+    left.splice(i, 1);
+    return B();
+  });
+}
+
 /** The sentence as plain text, for tooltips and titles. */
 function partsText(parts) { return parts.map((p) => (typeof p === "string" ? p : p.m)).join(""); }
 
