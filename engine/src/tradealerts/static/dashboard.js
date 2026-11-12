@@ -42,8 +42,11 @@ function runCard(run, onChange, { chartHeight = 96 } = {}) {
         h("div", { class: "lbl" }, signed(run.pnl_pct, "%"))),
       h("div", {}, h("div", { class: "big" }, String(run.trades)), h("div", { class: "lbl" }, run.trades ? `${run.wins} won` : "trades"))),
     lineChart(run.series, { title: "", fmt: (v) => money(v, sym), baseline: run.start_balance, tone, height: chartHeight, timeX: true }),
-    h("p", { class: "small" }, positionText(run, run.direction)),
-    stateLine(run.health),
+    h("ul", { class: "run-status small" },
+      h("li", {}, doingText(run, run.direction)),
+      run.health && run.health.state !== "attention" ? h("li", { class: run.health.state === "waiting" ? "muted" : "" }, marketText(run.health)) : null,
+      checksText(run.health) ? h("li", { class: "muted" }, checksText(run.health)) : null),
+    run.health && run.health.state === "attention" ? stateLine(run.health) : null,
     h("div", { class: "run-foot" },
       h("span", { class: "small muted" }, `Started ${when(run.started_at)} (${ago(run.started_at)})`),
       h("span", { class: "inline" }, h("a", { class: "button small", href: "#/run/" + run.id }, "Details"), stop)));
@@ -135,10 +138,21 @@ async function viewDashboard() {
     ["Start a forward test", dash.running.length + dash.finished.length > 0, null],
   ];
   const done = steps.filter((x) => x[1]).length;
-  if (done < steps.length && pref("ta-onboard-hidden", "") !== "1") {
+  const nearlyDone = done >= 3;
+  if (done < steps.length && pref("ta-onboard-hidden", "") !== "1" && nearlyDone && pref("ta-onboard-open", "") !== "1") {
+    const left = steps.find((x) => !x[1]);
+    append(page, [h("div", { class: "panel onboard onboard-line" }, h("div", { class: "row-between" },
+      h("p", { class: "small" }, h("strong", {}, `Getting started: ${done} of ${steps.length} done.`), " Still to do: ",
+        left[2] ? h("a", { href: left[2] }, left[0]) : left[0]),
+      h("div", { class: "inline" },
+        h("button", { type: "button", class: "quiet small", onclick: () => { savePref("ta-onboard-open", "1"); viewDashboard(); } }, "Show"),
+        h("button", { type: "button", class: "quiet small", onclick: () => { savePref("ta-onboard-hidden", "1"); viewDashboard(); } }, "Hide"))))]);
+  } else if (done < steps.length && pref("ta-onboard-hidden", "") !== "1") {
     const card = h("div", { class: "panel onboard" }, h("section", { class: "section" },
       h("div", { class: "row-between" }, h("div", {}, h("h2", {}, "Getting started"), h("p", { class: "small muted" }, `${done} of ${steps.length} done`)),
-        h("button", { type: "button", class: "quiet", onclick: () => { savePref("ta-onboard-hidden", "1"); card.remove(); } }, "Hide")),
+        h("div", { class: "inline" },
+          nearlyDone ? h("button", { type: "button", class: "quiet", onclick: () => { savePref("ta-onboard-open", ""); viewDashboard(); } }, "Collapse") : null,
+          h("button", { type: "button", class: "quiet", onclick: () => { savePref("ta-onboard-hidden", "1"); card.remove(); } }, "Hide"))),
       h("div", { class: "progress" }, h("span", { class: "progress-fill" })),
       h("ol", { class: "steps-list" }, steps.map(([t, ok, href]) => h("li", { class: ok ? "done" : "" },
         h("span", { class: "step-check", "aria-hidden": "true" }, ok ? "✓" : ""),
@@ -160,15 +174,28 @@ async function viewDashboard() {
     }
     const nextNews = newsRes && newsRes.events.find((e) => e.impact === "high" && new Date(e.time) > Date.now());
     const st = app.status && app.status.runner;
-    const tile = (big, label, cls = "", href = null) => {
-      const inner = [h("div", { class: "big " + cls }, big), h("div", { class: "lbl" }, label)];
-      return href ? h("a", { class: "tile", href }, inner) : h("div", { class: "tile" }, inner);
-    };
-    append(page, [h("div", { class: "panel summary-strip" },
-      one ? tile(money(total, one), `paper balance across ${n} test${n === 1 ? "" : "s"}`) : tile(String(n), "forward tests running"),
-      one ? tile(signedMoney(today, one), "in the last 24 hours", today >= 0 ? "gain" : "loss") : null,
-      tile(nextNews ? untilText(nextNews.time).replace(/^in /, "") : "–", nextNews ? `until ${nextNews.currency} ${nextNews.title}` : "no big news this week", "", "#/news"),
-      tile(st && st.next_run ? new Date(st.next_run).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "–", "next check"))]);
+    const nextCheck = st && st.next_run ? hhmm(st.next_run) : null;
+    const newsText = nextNews ? `${untilText(nextNews.time).replace(/^in /, "")} until ${nextNews.currency} ${nextNews.title}` : "no big news this week";
+    if (n <= 2) {
+      // a card or two: one line is enough, the cards carry the detail
+      const bits = [];
+      if (one) bits.push(h("span", {}, "Paper balance ", h("strong", { class: "num" }, money(total, one))));
+      if (one) bits.push(h("span", {}, "Last 24 hours ", h("strong", { class: "num " + (today >= 0 ? "gain" : "loss") }, signedMoney(today, one))));
+      bits.push(h("a", { href: "#/news" }, newsText[0].toUpperCase() + newsText.slice(1)));
+      if (nextCheck) bits.push(h("button", { type: "button", class: "linklike", onclick: () => toggleRunnerPanel(true) }, `Next check ${nextCheck}`));
+      append(page, [h("p", { class: "summary-line" }, bits.flatMap((b, i) => (i ? [h("span", { class: "sep", "aria-hidden": "true" }, "·"), b] : [b])))]);
+    } else {
+      const tile = (big, label, cls = "", href = null, onclick = null) => {
+        const inner = [h("div", { class: "big " + cls }, big), h("div", { class: "lbl" }, label)];
+        if (onclick) return h("button", { type: "button", class: "tile", onclick }, inner);
+        return href ? h("a", { class: "tile", href }, inner) : h("div", { class: "tile" }, inner);
+      };
+      append(page, [h("div", { class: "panel summary-strip" },
+        one ? tile(money(total, one), `paper balance across ${n} tests`, "", "#/strategies") : tile(String(n), "forward tests running", "", "#/strategies"),
+        one ? tile(signedMoney(today, one), "in the last 24 hours", today >= 0 ? "gain" : "loss", "#/activity?filter=trades") : null,
+        tile(nextNews ? untilText(nextNews.time).replace(/^in /, "") : "–", nextNews ? `until ${nextNews.currency} ${nextNews.title}` : "no big news this week", "", "#/news"),
+        tile(nextCheck || "–", "next check", "", null, nextCheck ? () => toggleRunnerPanel(true) : null))]);
+    }
   }
 
   if (n) {

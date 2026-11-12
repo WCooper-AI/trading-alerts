@@ -300,3 +300,31 @@ def test_status_dashboard_and_strategies_agree_on_each_tests_state(client, ws, m
     assert counts["watching"] == 1 and {dash["state"], listed["state"], detail["state"]} == {"watching"}
     client.post(f"/api/strategies/{sid}/forward-test/stop", headers=H)
     assert client.get(f"/api/runs/{run['id']}").json()["health"]["state"] == "stopped"
+
+
+def test_dashboard_cards_carry_what_each_test_is_doing(client, ws):
+    import pandas as pd
+
+    from tradealerts.config import load_config
+    from tradealerts.runner import run_cycle
+    from tradealerts.sample import synthetic_bars
+
+    sid, run = start(client)
+    cfg = load_config(ws / "config.yaml")
+    store = StateStore(cfg.state_db)
+    bars = synthetic_bars(days=90, freq="1h", seed=4)
+    store.db.execute("UPDATE runs SET started_at = ? WHERE id = ?", (bars.index[1000].isoformat(), run["id"]))
+    store.commit()
+    for i in range(1001, len(bars), 7):
+        run_cycle(cfg, store, [], now=bars.index[i] + pd.Timedelta("1h"))
+    rec = store.load(sid)
+    store.close()
+    client.app.state.ctx.runner_status = lambda ws: {"enabled": True, "last_run": "2026-11-10T14:02:00+00:00",
+                                                     "next_run": "2026-11-10T14:15:00+00:00", "problems": {}}
+    card = client.get("/api/dashboard").json()["running"][0]
+    assert card["health"]["last_check"] == "2026-11-10T14:02:00+00:00" and card["health"]["next_check"]
+    assert card["candles"] > 0 and "pending" in card
+    if rec["state"]["position"]:
+        assert card["position"]["stop"] and "unrealised" in card["position"]
+    else:
+        assert card["position"] is None

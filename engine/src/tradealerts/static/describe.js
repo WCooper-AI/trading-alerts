@@ -251,6 +251,31 @@ function positionText(run, direction) {
   if (!run.candles) return "Waiting for the first candle to close";
   return "Waiting for a signal";
 }
+/** The fuller version for a card: the trade's levels, or what it's waiting for. */
+function doingText(run, direction) {
+  const p = run.position;
+  if (p) {
+    const u = p.unrealised;
+    const levels = [`stop ${num(p.stop)}`, p.target ? `target ${num(p.target)}` : null].filter(Boolean).join(", ");
+    return `In a trade: ${direction === "short" ? "sell" : "buy"} from ${num(p.entry_price)}, ${levels}` +
+      (u ? ` (${signedMoney(u, run.currency_symbol)} so far)` : "");
+  }
+  if (run.pending) return "Rules met: opening a trade at the next candle";
+  if (!run.candles) return "Waiting for the first candle to close";
+  return "Waiting for the rules to be met";
+}
+function marketText(hl) {
+  if (!hl) return null;
+  if (hl.state === "waiting") return `Market shut (${hl.why === "weekend" ? "weekend" : "daily break"}), opens ${reopenText(hl.reopens)}`;
+  return "Market open";
+}
+function checksText(hl) {
+  if (!hl || hl.state === "attention" || hl.state === "stopped") return null;
+  const parts = [];
+  if (hl.last_check) parts.push(`Last check ${hhmm(hl.last_check)}`);
+  if (hl.next_check) parts.push(`Next check ${hhmm(hl.next_check)}`);
+  return parts.join(" · ") || null;
+}
 
 /** Forward test start/stop and the phone alerts switch, shared by both editors. */
 function statusControls(o) {

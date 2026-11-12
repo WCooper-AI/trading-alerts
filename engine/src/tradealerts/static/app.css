@@ -1313,3 +1313,14 @@ input[type="number"]::-webkit-outer-spin-button, input[type="number"]::-webkit-i
   .activity-time { grid-column: 2; order: 3; }
 }
 
+/* ================================================================== dashboard cards (0.3) */
+.run-status { list-style: none; margin: 0; padding: 0; display: grid; gap: .15rem; }
+.summary-line { margin: -.4rem 0 .2rem; color: var(--muted); font-size: var(--step--1); display: flex; flex-wrap: wrap; gap: .25rem .55rem; align-items: baseline; }
+.summary-line strong { color: var(--ink); font-weight: 650; }
+.summary-line .sep { opacity: .5; }
+.linklike { background: none; border: 0; padding: 0; box-shadow: none; color: var(--accent-text); font: inherit; text-decoration: underline; cursor: pointer; height: auto; }
+.onboard-line .row-between { padding: .75rem 1.2rem; }
+.onboard-line p { margin: 0; }
+button.tile { font: inherit; text-align: left; color: inherit; background: none; box-shadow: none; border: 0; border-left: 1px solid var(--line-soft); border-radius: 0; height: auto; }
+button.tile:hover { background: var(--glass-thin); }
+
