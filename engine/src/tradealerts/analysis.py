@@ -476,3 +476,100 @@ def condition_counts(spec, df: pd.DataFrame, since: pd.Timestamp | None = None) 
 def why_no_trades(strategy: Strategy, df: pd.DataFrame, start: pd.Timestamp | None) -> dict:
     rows = condition_counts(strategy.entry_spec, df, start)
     return {"candles": rows[0]["candles"] if rows else 0, "conditions": rows}
+
+
+# --------------------------------------------------------------------------- live vs backtest, trade by trade
+
+WINDOW_METRICS = ("win_rate_pct", "profit_factor", "avg_r", "max_drawdown_pct", "trades_per_month",
+                  "gross_pnl", "spread_cost", "funding")
+FEW_TRADES = 20
+
+
+def trades_frame(rows: list[dict]) -> pd.DataFrame:
+    """Closed trades (backtest or paper) as a frame with the columns the window metrics need."""
+    cols = ["entry_time", "exit_time", "pnl", "r_multiple", "spread_cost", "funding"]
+    df = pd.DataFrame(rows, columns=cols) if not isinstance(rows, pd.DataFrame) else rows.reindex(columns=cols)
+    df = df.dropna(subset=["pnl"]).copy()
+    for c in ("pnl", "r_multiple", "spread_cost", "funding"):
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+    for c in ("entry_time", "exit_time"):
+        df[c] = pd.to_datetime(df[c], utc=True, errors="coerce")
+    return df.reset_index(drop=True)
+
+
+def window_metrics(trades: pd.DataFrame, start_equity: float) -> dict | None:
+    """The facts about one stretch of trades: how often it won, profit factor, average R,
+    the worst drop (as % of the starting balance), trades a month, and the gross P&L
+    with what spread and funding took out of it."""
+    if trades is None or len(trades) == 0:
+        return None
+    pnl = trades["pnl"].to_numpy(dtype=float)
+    wins, losses = pnl[pnl > 0].sum(), -pnl[pnl <= 0].sum()
+    eq = start_equity + np.cumsum(pnl)
+    peak = np.maximum.accumulate(np.concatenate(([start_equity], eq)))[1:]
+    dd = float(np.max((peak - eq) / peak * 100)) if start_equity > 0 else 0.0
+    t0, t1 = trades["entry_time"].min(), trades["exit_time"].max()
+    months = max((t1 - t0) / pd.Timedelta(days=30.4375), 1 / 30.4375) if pd.notna(t0) and pd.notna(t1) else None
+    gross = float(pnl.sum() + trades["spread_cost"].sum() + trades["funding"].sum())
+    return {
+        "trades": int(len(pnl)),
+        "win_rate_pct": float((pnl > 0).mean() * 100),
+        "profit_factor": float(wins / losses) if losses > 0 else (float("inf") if wins > 0 else 0.0),
+        "avg_r": float(trades["r_multiple"].mean()),
+        "max_drawdown_pct": dd,
+        "trades_per_month": float(len(pnl) / months) if months else None,
+        "gross_pnl": gross,
+        "spread_cost": float(trades["spread_cost"].sum()),
+        "funding": float(trades["funding"].sum()),
+        "net_pnl": float(pnl.sum()),
+    }
+
+
+def few_trades_notice(n: int) -> str | None:
+    """Below 20 live trades the ranges say little, and the page says so in plain words."""
+    return f"Only {n} trades so far — ranges are wide with this few trades" if n < FEW_TRADES else None
+
+
+def _position(live: float | None, low: float, high: float) -> str | None:
+    if live is None or not np.isfinite(live):
+        return None
+    return "below" if live < low else "above" if live > high else "within"
+
+
+def trade_window_ranges(backtest: pd.DataFrame, live: list[dict] | pd.DataFrame, start_equity: float,
+                        samples: int = 400, rng: np.random.Generator | None = None, max_window: int = 30) -> dict:
+    """Where the live paper trades sit against the backtest, trade for trade.
+
+    The last ``window`` live trades (all of them, up to ``max_window``) are measured, and
+    the backtest is resampled ``samples`` times into stretches of the same number of
+    consecutive trades (a block bootstrap, so trades a month keeps its meaning). The
+    10th–90th percentile of each measure is the backtest's usual range; the live value
+    is reported as below, within or above it. Facts only, no verdict."""
+    rng = rng or np.random.default_rng(7)
+    bt, lv = trades_frame(backtest), trades_frame(live)
+    n_live, n_bt = len(lv), len(bt)
+    window = max(1, min(n_live, max_window)) if n_live else min(max_window, max(1, n_bt))
+    out = {"live_trades": n_live, "backtest_trades": n_bt, "window": window,
+           "notice": few_trades_notice(n_live), "metrics": {}}
+    if n_bt < window + 5:
+        out["reason"] = "The backtest has too few trades to build a range of this length"
+        return out
+    starts = rng.integers(0, n_bt - window + 1, size=samples)
+    draws = {k: [] for k in WINDOW_METRICS}
+    for s0 in starts:
+        m = window_metrics(bt.iloc[s0:s0 + window], start_equity)
+        for k in WINDOW_METRICS:
+            v = m[k]
+            if v is not None and np.isfinite(v):
+                draws[k].append(v)
+    live_m = window_metrics(lv.iloc[-window:], start_equity) if n_live else None
+    for k in WINDOW_METRICS:
+        if not draws[k]:
+            continue
+        low, med, high = (float(x) for x in np.percentile(draws[k], (10, 50, 90)))
+        lv_v = live_m[k] if live_m else None
+        out["metrics"][k] = {"low": low, "median": med, "high": high,
+                             "live": None if lv_v is None or not np.isfinite(lv_v) else float(lv_v),
+                             "position": _position(lv_v, low, high)}
+    out["live"] = live_m
+    return out

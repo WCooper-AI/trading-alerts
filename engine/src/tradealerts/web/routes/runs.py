@@ -98,6 +98,7 @@ def run_backtest_range(run_id: int, request: Request, body: dict = Body(default=
         if not run:
             err(404, "No forward test with that id")
         eq = store.equity(run_id)
+        live_trades = store.trades(run_id=run_id)
     if run.get("strategy_yaml"):
         # the rules this forward test ran on, even if the strategy was edited or deleted since
         data = versions.parse(run["strategy_yaml"])
@@ -112,7 +113,7 @@ def run_backtest_range(run_id: int, request: Request, body: dict = Body(default=
     series = run_series(run, eq, current, 160)
     try:
         return ctx.jobs.run(ws.owner, compute.backtest_range, data, float(run["start_balance"]), df, fine,
-                            test_start, series, notes)
+                            test_start, series, notes, live_trades)
     except Busy as exc:
         err(429, str(exc))
     except ValueError as exc:

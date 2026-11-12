@@ -206,8 +206,10 @@ def portfolio(parts: list[tuple], balance: float, currency: str, notes: list[str
     })
 
 
-def backtest_range(data: dict, start_balance: float, df, fine, test_start, series: list, notes: list[str]) -> dict:
-    """The range a strategy's backtest moved over stretches as long as its forward test so far."""
+def backtest_range(data: dict, start_balance: float, df, fine, test_start, series: list, notes: list[str],
+                   live_trades: list[dict] | None = None) -> dict:
+    """The range a strategy's backtest moved over stretches as long as its forward test so far,
+    and (given the forward test's closed trades) where they sit against the backtest's trade windows."""
     s = strategy(data)
     s.risk.account_size = start_balance
     res = run_backtest(s, df, fine, start=test_start)
@@ -224,6 +226,7 @@ def backtest_range(data: dict, start_balance: float, df, fine, test_start, serie
         "points": pts,
         "complete": len(pts) == len(series),
         "backtest": {"start": m["start"], "end": m["end"], "return_pct": m["total_return_pct"], "trades": m["trades"]},
+        "windows": analysis.trade_window_ranges(res.trades, live_trades or [], start_balance),
         "notes": notes,
     })
 
