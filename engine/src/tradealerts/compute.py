@@ -12,7 +12,7 @@ import math
 
 import pandas as pd
 
-from . import analysis
+from . import rules, analysis
 from .backtest import run_backtest
 from .report import warnings_for
 from .strategy import check_runtime, strategy_from_dict
@@ -61,6 +61,58 @@ def trade_marks(trades: list[dict], since: pd.Timestamp | None) -> list:
     return out
 
 
+PRICE_PANE = {"sma", "ema", "bollinger_upper", "bollinger_lower", "keltner_upper", "keltner_lower", "highest", "lowest",
+              "opening_range_high", "opening_range_low"}
+ZERO_LINE = {"macd", "macd_signal", "macd_hist", "pct_change", "zscore", "pct_from_high", "pct_from_low"}
+
+
+def _rule_levels(spec) -> dict[str, list[float]]:
+    """Numbers an operand is compared with in the rules, e.g. {"RSI(14)": [30.0]}."""
+    out: dict[str, list[float]] = {}
+
+    def walk(node):
+        if isinstance(node, list):
+            for x in node:
+                walk(x)
+        elif isinstance(node, dict):
+            if {"left", "op", "right"} <= set(node):
+                for a, b in ((node["left"], node["right"]), (node["right"], node["left"])):
+                    label = rules.operand_label(a)
+                    if label and isinstance(b, (int, float)) and not isinstance(b, bool):
+                        out.setdefault(label, []).append(float(b))
+            for k in ("all", "any", "not"):
+                if k in node:
+                    walk(node[k])
+
+    walk(spec)
+    return out
+
+
+def chart_indicators(s, df: pd.DataFrame, limit: int) -> list:
+    """Each indicator the entry rule reads, over the last ``limit`` candles: drawn on the price
+    pane (averages, bands) or in an oscillator pane below (RSI, MACD...), with reference levels."""
+    ctx = rules.Context(df)
+    levels = _rule_levels(s.entry_spec)
+    out = []
+    for label, spec in rules.reason_operands(s.entry_spec):
+        if not isinstance(spec, dict) or "indicator" not in spec:
+            continue
+        try:
+            series = rules.compile_operand(spec)(ctx)
+        except Exception:
+            continue
+        name = str(spec["indicator"])
+        refs = set(levels.get(label, []))
+        if name in ZERO_LINE:
+            refs.add(0.0)
+        if name == "rsi":
+            refs |= {30.0, 70.0}
+        vals = series.tail(limit)
+        out.append({"label": label, "name": name, "pane": "price" if name in PRICE_PANE else "oscillator",
+                    "values": [None if pd.isna(v) else round(float(v), 6) for v in vals], "levels": sorted(refs)})
+    return out
+
+
 def signal_marks(s, df: pd.DataFrame, limit: int) -> list:
     try:
         prepared = s.prepare(df)
@@ -93,7 +145,7 @@ def backtest(data: dict, df, fine, test_start, notes: list[str]) -> dict:
     bench = period["close"] / float(period["open"].iloc[0]) * s.risk.account_size if len(period) else pd.Series(dtype=float)
     return _clean({
         "chart": {"candles": candles_out(shown, len(shown)), "marks": trade_marks(trades, shown.index[0]) if len(shown) else [],
-                  "timeframe": s.market.timeframe},
+                  "indicators": chart_indicators(s, df, len(shown)), "timeframe": s.market.timeframe},
         "metrics": res.metrics,
         "warnings": warnings_for(res),
         "equity": _points(eq),

@@ -396,3 +396,24 @@ def test_forward_test_trades_keep_the_details(client, ws):
     assert trades[0]["mae_r"] <= 0 <= trades[0]["mfe_r"]
     detail = client.get(f"/api/runs/{run['id']}").json()
     assert detail["trade_list"][0]["entry_reason"]
+
+
+# --------------------------------------------------------------------------- indicator overlays
+
+
+def test_chart_carries_the_indicators_the_rule_reads(client):
+    r = client.post("/api/backtest", json={"data": CSV_STRATEGY}, headers=H).json()
+    inds = r["chart"]["indicators"]
+    assert [i["pane"] for i in inds] == ["oscillator"] and inds[0]["label"] == "RSI(14)"
+    assert len(inds[0]["values"]) == len(r["chart"]["candles"])
+    assert {35.0, 30.0, 70.0} <= set(inds[0]["levels"])  # the rule's level plus RSI's usual ones
+    bands = edited(entry={"all": [{"left": "close", "op": "<", "right": {"indicator": "bollinger_lower", "period": 20}},
+                                  {"left": "close", "op": ">", "right": {"indicator": "bollinger_upper", "period": 20, "shift": 1}}]})
+    inds = client.post("/api/backtest", json={"data": bands}, headers=H).json()["chart"]["indicators"]
+    assert [(i["name"], i["pane"]) for i in inds] == [("bollinger_lower", "price"), ("bollinger_upper", "price")]
+    assert inds[1]["label"] == "BOLLINGER UPPER(20) 1 bar ago" and inds[1]["levels"] == []
+    plain = edited(entry={"left": "close", "op": ">", "right": 5000})
+    assert client.post("/api/backtest", json={"data": plain}, headers=H).json()["chart"]["indicators"] == []
+    sid = client.post("/api/strategies", json={"data": CSV_STRATEGY}, headers=H).json()["id"]
+    c = client.get(f"/api/candles?strategy={sid}&bars=100").json()
+    assert c["indicators"][0]["label"] == "RSI(14)" and len(c["indicators"][0]["values"]) == len(c["candles"])

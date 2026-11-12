@@ -1377,3 +1377,21 @@ button.tile:hover { background: var(--glass-thin); }
 .chart-compare { fill: none; stroke: var(--muted); stroke-dasharray: 2 3; }
 .compare-toggle { margin-right: .6rem; }
 
+/* ================================================================== indicator overlays and the oscillator pane */
+.ind-line { fill: none; stroke-linejoin: round; }
+.ind-line.ind-0, .swatch.ind-0 { stroke: var(--accent); background: var(--accent); }
+.ind-line.ind-1, .swatch.ind-1 { stroke: var(--purple); background: var(--purple); }
+.ind-line.ind-2, .swatch.ind-2 { stroke: var(--warn); background: var(--warn); }
+.ind-line.ind-3, .swatch.ind-3 { stroke: var(--muted); background: var(--muted); }
+.ind-fill { stroke: none; opacity: .12; }
+.ind-fill.ind-0 { fill: var(--accent); } .ind-fill.ind-1 { fill: var(--purple); } .ind-fill.ind-2 { fill: var(--warn); } .ind-fill.ind-3 { fill: var(--muted); }
+.pane-split { stroke: var(--line); }
+.osc-level { stroke: var(--muted); opacity: .7; }
+.osc-bar.up { fill: var(--gain); opacity: .75; } .osc-bar.down { fill: var(--loss); opacity: .75; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: .3rem .8rem; margin-top: .35rem; }
+.chart-legend:empty { display: none; }
+.legend-item { background: none; border: 0; box-shadow: none; padding: .1rem .2rem; height: auto; color: var(--muted); font: inherit; font-size: var(--step--1); display: inline-flex; align-items: center; gap: .35rem; cursor: pointer; }
+.legend-item.off { opacity: .45; text-decoration: line-through; }
+.legend-item .swatch { width: 1rem; height: 2px; display: inline-block; border-radius: 1px; }
+.readout-ind { color: var(--muted); }
+

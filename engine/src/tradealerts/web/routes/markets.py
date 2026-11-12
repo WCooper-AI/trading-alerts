@@ -111,7 +111,9 @@ def candles(request: Request, market: str = "", strategy: str = "", timeframe: s
     first = df.index[-min(bars, len(df))]
     with ws.store(create=False) as store:
         if s is not None:
-            out["marks"] = compute.signal_marks(s, data_mod.closed_bars(df, tf), bars)
+            closed = data_mod.closed_bars(df, tf)
+            out["marks"] = compute.signal_marks(s, closed, bars)
+            out["indicators"] = compute.chart_indicators(s, df, min(bars, len(df)))
             run = store.active_run(strategy) if store else None
             if run:
                 out["marks"] += compute.trade_marks(store.trades(run_id=run["id"]), first)

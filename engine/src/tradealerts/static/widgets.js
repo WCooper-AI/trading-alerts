@@ -198,9 +198,15 @@ function candleChart(initial, { height = 380, onPick = null, title = null, onMar
   const full = expandable(wrap, (e) => keyNav(e));
   svgEl.setAttribute("tabindex", "0");
   svgEl.addEventListener("keydown", (e) => keyNav(e));
-  append(wrap, [h("div", { class: "candle-top" }, readout, h("span", { class: "spacer" }), latest, resetZoom, zoomOut, zoomIn, full), svgEl,
+  const legend = h("div", { class: "chart-legend small" });
+  append(wrap, [h("div", { class: "candle-top" }, readout, h("span", { class: "spacer" }), latest, resetZoom, zoomOut, zoomIn, full), svgEl, legend,
     h("p", { class: "small muted candle-hint" }, onPick ? "Drag to scroll back. Click a price to fill in an alert." : "Drag to scroll back in time.")]);
   let data = initial;
+  // indicators the strategy reads: on the price pane, or in an oscillator pane below it
+  let hiddenInd = new Set();
+  try { hiddenInd = new Set(JSON.parse(pref("ta-ind-hidden", "[]"))); } catch (_) { /* fresh */ }
+  const shownInd = () => (data.indicators || []).filter((ind) => !hiddenInd.has(ind.label));
+  const OSC_SHARE = 0.28;
   const DEFAULT_VISIBLE = 120;
   let visible = Math.min(DEFAULT_VISIBLE, (data.candles || []).length || DEFAULT_VISIBLE);
   let offset = 0; // candles hidden on the right (0 = showing the latest)
@@ -222,7 +228,12 @@ function candleChart(initial, { height = 380, onPick = null, title = null, onMar
     resetZoom.hidden = visible === Math.min(DEFAULT_VISIBLE, all.length);
     const end = all.length - offset;
     const view = all.slice(end - visible, end);
+    const inds = shownInd();
+    const oscs = inds.filter((ind) => ind.pane === "oscillator");
+    const PB = oscs.length ? Math.round(H - BOT - H * OSC_SHARE) : H - BOT;  // bottom of the price pane
+    const at = (ind, i) => ind.values[ind.values.length - all.length + (end - visible) + i];  // value for view candle i
     let lo = Math.min(...view.map((c) => c[3])), hi = Math.max(...view.map((c) => c[2]));
+    for (const ind of inds) if (ind.pane === "price") view.forEach((_, i) => { const v = at(ind, i); if (v !== null && v !== undefined) { lo = Math.min(lo, v); hi = Math.max(hi, v); } });
     const span0 = hi - lo || Math.abs(hi) * 0.001 || 1;
     for (const l of [...(data.lines || []), ...(focus ? focus.lines : []), ...(data.alerts || []).map((a) => ({ price: a.price }))]) {
       if (l.price > lo - span0 * 0.6 && l.price < hi + span0 * 0.6) { lo = Math.min(lo, l.price); hi = Math.max(hi, l.price); }
@@ -232,12 +243,13 @@ function candleChart(initial, { height = 380, onPick = null, title = null, onMar
     const d = priceDigits(view[view.length - 1][4]);
     const slot = (W - AX - 8) / visible;
     const x = (i) => 8 + slot * (i + 0.5);
-    const y = (v) => TOP + ((hi - v) * (H - TOP - BOT)) / (hi - lo);
-    geom = { view, slot, x, y, lo, hi, d, end };
+    const y = (v) => TOP + ((hi - v) * (PB - TOP)) / (hi - lo);
+    geom = { view, slot, x, y, lo, hi, d, end, PB, inds, at };
     svgEl.appendChild(svg("rect", { x: 0, y: 0, width: W, height: H, rx: 16, class: "chart-bg" }));
     // grid + price axis
     for (let k = 0; k <= 4; k++) {
       const v = lo + ((hi - lo) * k) / 4;
+      if (oscs.length && k === 0) continue;
       svgEl.appendChild(svg("line", { x1: 8, x2: W - AX, y1: y(v), y2: y(v), class: "grid" }));
       const t = svg("text", { x: W - AX + 8, y: y(v) + 4, class: "axis-label" });
       t.textContent = fmtPrice(v, d);
@@ -272,6 +284,74 @@ function candleChart(initial, { height = 380, onPick = null, title = null, onMar
         rx: Math.min(2, bw / 3), class: "body " + cls }));
     });
     svgEl.appendChild(g);
+    // indicators on the price pane: lines, and a light fill between a pair of bands
+    const linePath = (ind, yy) => {
+      let dd = "", pen = false;
+      view.forEach((_, i) => { const v = at(ind, i); if (v === null || v === undefined) { pen = false; return; } dd += `${pen ? "L" : "M"}${x(i).toFixed(1)},${yy(v).toFixed(1)}`; pen = true; });
+      return dd;
+    };
+    const tone = (ind) => "ind-" + ((data.indicators || []).indexOf(ind) % 4);
+    const priceInds = inds.filter((ind) => ind.pane === "price");
+    const pts = (ind, yy) => view.map((_, i) => [at(ind, i), i]).filter(([v]) => v !== null && v !== undefined).map(([v, i]) => `${x(i).toFixed(1)},${yy(v).toFixed(1)}`);
+    for (const [up, down] of [["bollinger_upper", "bollinger_lower"], ["keltner_upper", "keltner_lower"]]) {
+      const a = priceInds.find((ind) => ind.name === up), b = priceInds.find((ind) => ind.name === down);
+      if (!a || !b) continue;
+      const top = pts(a, y), bottom = pts(b, y);
+      if (top.length && bottom.length) svgEl.appendChild(svg("path", { d: "M" + top.join("L") + "L" + bottom.reverse().join("L") + "Z", class: "ind-fill " + tone(a) }));
+    }
+    for (const ind of priceInds) {
+      const dd = linePath(ind, y);
+      if (dd) svgEl.appendChild(svg("path", { d: dd, class: "ind-line " + tone(ind), "stroke-width": 1.5 }));
+    }
+    // oscillator pane
+    if (oscs.length) {
+      const OT = PB + 12, OB = H - BOT;
+      let olo = Infinity, ohi = -Infinity;
+      for (const ind of oscs) {
+        view.forEach((_, i) => { const v = at(ind, i); if (v !== null && v !== undefined) { olo = Math.min(olo, v); ohi = Math.max(ohi, v); } });
+        for (const lv of ind.levels || []) { olo = Math.min(olo, lv); ohi = Math.max(ohi, lv); }
+      }
+      if (!isFinite(olo)) { olo = 0; ohi = 1; }
+      if (ohi === olo) { ohi += 1; olo -= 1; }
+      const opad = (ohi - olo) * 0.08; olo -= opad; ohi += opad;
+      const oy = (v) => OT + ((ohi - v) * (OB - OT)) / (ohi - olo);
+      geom.osc = { oy, olo, ohi, OT, OB };
+      svgEl.appendChild(svg("line", { x1: 8, x2: W - AX, y1: PB + 6, y2: PB + 6, class: "pane-split" }));
+      for (let k = 0; k <= 2; k++) {
+        const v = olo + ((ohi - olo) * k) / 2;
+        svgEl.appendChild(svg("line", { x1: 8, x2: W - AX, y1: oy(v), y2: oy(v), class: "grid" }));
+        const t = svg("text", { x: W - AX + 8, y: oy(v) + 4, class: "axis-label" });
+        t.textContent = short(+v.toFixed(2));
+        svgEl.appendChild(t);
+      }
+      const drawn = new Set();
+      for (const ind of oscs) for (const lv of ind.levels || []) {
+        if (drawn.has(lv)) continue;
+        drawn.add(lv);
+        svgEl.appendChild(svg("line", { x1: 8, x2: W - AX, y1: oy(lv), y2: oy(lv), class: "osc-level", "stroke-dasharray": "4 4" }));
+        const t = svg("text", { x: 14, y: oy(lv) - 3, class: "pline-label level" });
+        t.textContent = short(lv);
+        svgEl.appendChild(t);
+      }
+      for (const ind of oscs) {
+        if (ind.name === "macd_hist") {
+          view.forEach((_, i) => { const v = at(ind, i); if (v === null || v === undefined) return;
+            svgEl.appendChild(svg("rect", { x: x(i) - bw / 2, y: Math.min(oy(v), oy(0)), width: bw, height: Math.max(1, Math.abs(oy(v) - oy(0))), class: "osc-bar " + (v >= 0 ? "up" : "down") })); });
+          continue;
+        }
+        const dd = linePath(ind, oy);
+        if (dd) svgEl.appendChild(svg("path", { d: dd, class: "ind-line " + tone(ind), "stroke-width": 1.5 }));
+      }
+    }
+    // legend: click an indicator to hide or show it
+    clear(legend);
+    for (const ind of data.indicators || []) {
+      const off = hiddenInd.has(ind.label);
+      legend.appendChild(h("button", { type: "button", class: "legend-item" + (off ? " off" : ""), "aria-pressed": String(!off),
+        title: off ? `Show ${ind.label}` : `Hide ${ind.label}`,
+        onclick: () => { if (off) hiddenInd.delete(ind.label); else hiddenInd.add(ind.label); savePref("ta-ind-hidden", JSON.stringify([...hiddenInd])); draw(); } },
+        h("span", { class: "swatch line " + tone(ind) }), ind.label));
+    }
     // price lines (stop/target) and alert lines
     const hline = (price, label, cls) => {
       if (price < lo || price > hi) return;
@@ -336,7 +416,8 @@ function candleChart(initial, { height = 380, onPick = null, title = null, onMar
     clear(readout);
     append(readout, [h("strong", {}, when(c[0])),
       ` O ${fmtPrice(c[1], d)}  H ${fmtPrice(c[2], d)}  L ${fmtPrice(c[3], d)}  C ${fmtPrice(c[4], d)} `,
-      h("span", { class: chg >= 0 ? "gain" : "loss" }, `${chg >= 0 ? "+" : ""}${fmtPrice(chg, d)}`)]);
+      h("span", { class: chg >= 0 ? "gain" : "loss" }, `${chg >= 0 ? "+" : ""}${fmtPrice(chg, d)}`),
+      ...(geom.inds || []).map((ind) => { const v = geom.at(ind, i); return h("span", { class: "readout-ind" }, ` ${ind.label} ${v === null || v === undefined ? "–" : short(+v.toFixed(ind.pane === "price" ? d : 2))}`); })]);
   }
 
   const toLocal = (e) => {
@@ -356,12 +437,14 @@ function candleChart(initial, { height = 380, onPick = null, title = null, onMar
     const { px, py } = toLocal(e);
     if (px > W - AX || py < TOP || py > H - BOT) return;
     const i = Math.max(0, Math.min(geom.view.length - 1, Math.round((px - 8) / geom.slot - 0.5)));
-    const price = geom.hi - ((py - TOP) * (geom.hi - geom.lo)) / (H - TOP - BOT);
+    const inPrice = py <= geom.PB;
+    const price = inPrice ? geom.hi - ((py - TOP) * (geom.hi - geom.lo)) / (geom.PB - TOP)
+      : geom.osc ? geom.osc.ohi - ((py - geom.osc.OT) * (geom.osc.ohi - geom.osc.olo)) / (geom.osc.OB - geom.osc.OT) : null;
     geom.cx.setAttribute("x1", geom.x(i)); geom.cx.setAttribute("x2", geom.x(i));
     geom.cy.setAttribute("y1", py); geom.cy.setAttribute("y2", py);
     geom.cbox.setAttribute("y", py - 10);
     geom.ctext.setAttribute("y", py + 4);
-    geom.ctext.textContent = fmtPrice(price, geom.d);
+    geom.ctext.textContent = price === null ? "" : inPrice ? fmtPrice(price, geom.d) : short(+price.toFixed(2));
     for (const k of ["cx", "cy", "cbox", "ctext"]) geom[k].setAttribute("visibility", "visible");
     showReadout(i);
   });
@@ -370,7 +453,7 @@ function candleChart(initial, { height = 380, onPick = null, title = null, onMar
     drag = null;
     if (!wasDrag && onPick && geom) {
       const { py } = toLocal(e);
-      if (py >= TOP && py <= H - BOT) onPick(+(geom.hi - ((py - TOP) * (geom.hi - geom.lo)) / (H - TOP - BOT)).toFixed(geom.d));
+      if (py >= TOP && py <= geom.PB) onPick(+(geom.hi - ((py - TOP) * (geom.hi - geom.lo)) / (geom.PB - TOP)).toFixed(geom.d));
     }
   });
   svgEl.addEventListener("pointerleave", () => {
