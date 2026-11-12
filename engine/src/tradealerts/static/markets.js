@@ -87,6 +87,10 @@ async function viewMarkets() {
         d.spread !== null ? h("span", { class: "small muted" }, ` · spread ${fmtPrice(d.spread, dg)}`) : null]);
       clear(status);
       status.appendChild(feedBadge(d));
+      clear(qualityBox);
+      if (d.quality && d.quality.length) qualityBox.appendChild(h("ul", { class: "warnings quality-strip", "aria-label": "Data quality warnings" },
+        d.quality.map((w) => h("li", {}, w.text))));
+      if (alertList.update) alertList.update(d);
       if (!chart) {
         chart = candleChart(d, { onPick: (p) => pricePick.set && pricePick.set(p), title: d.label });
         clear(chartBox).appendChild(chart);
@@ -107,12 +111,18 @@ async function viewMarkets() {
     } finally { if (seq === reqSeq) loading = false; }
   }
 
-  async function renderAlerts() {
+  const qualityBox = h("div", { class: "quality-box" });
+  const alertList = {};  // alertList.update(d) refreshes the distance-to-target text when new prices arrive
+
+  async function renderAlerts(editing = null) {
+    /* editing: an existing alert whose values fill the form; saving then updates it in place. */
     const res = await GET("/price-alerts");
     const mine = res.alerts.filter((a) => a.market === market);
     const others = res.alerts.filter((a) => a.market !== market && a.active);
-    const dir = { v: "above" };
-    let price = null;
+    const dir = { v: editing ? editing.direction : "above" };
+    let price = editing ? editing.price : null;
+    const opts = { repeat: editing ? editing.repeat || "once" : "once", cooldown: editing ? editing.cooldown_minutes : 60,
+      cross: editing ? !!editing.cross : false };
     const dirSeg = h("div", { class: "segmented", role: "group", "aria-label": "Above or below" });
     const renderDir = () => {
       clear(dirSeg);
@@ -120,40 +130,70 @@ async function viewMarkets() {
         "aria-pressed": String(dir.v === v), onclick: () => { dir.v = v; renderDir(); } }, t));
     };
     renderDir();
-    const priceIn = numberInput(null, (n) => { price = n; }, { label: "Price", step: "any", min: "0", placeholder: "Price", allowEmpty: true, cls: "no-spin" });
+    const priceIn = numberInput(price, (n) => { price = n; }, { label: "Price", step: "any", min: "0", placeholder: "Price", allowEmpty: true, cls: "no-spin" });
     pricePick.set = (p) => {
       priceIn.value = p; price = p; priceIn.dispatchEvent(new Event("input"));
       if (lastData) { const last = lastData.candles[lastData.candles.length - 1][4]; dir.v = p >= last ? "above" : "below"; renderDir(); }
       priceIn.focus();
     };
-    const note = h("input", { class: "wide", placeholder: "Note (optional)", "aria-label": "Note", maxlength: 200 });
-    const add = h("button", { class: "primary", type: "button" }, "Add alert");
+    const note = h("input", { class: "wide", placeholder: "Note (optional)", "aria-label": "Note", maxlength: 200, value: editing ? editing.note || "" : "" });
+    const cooldownIn = numberInput(opts.cooldown, (n) => { opts.cooldown = n; }, { label: "Cooldown in minutes", integer: true, min: "0", cls: "no-spin" });
+    const cooldownWrap = h("span", { class: "inline small" }, "then wait ", cooldownIn, " min");
+    const repeatSel = choiceSelect([["once", "Once, then switch off"], ["every", "Every time, after a cooldown"]], opts.repeat,
+      (v) => { opts.repeat = v; cooldownWrap.hidden = v !== "every"; }, { label: "How often" });
+    cooldownWrap.hidden = opts.repeat !== "every";
+    const crossBox = h("input", { type: "checkbox", checked: opts.cross, onchange: (ev) => { opts.cross = ev.target.checked; } });
+    const crossLbl = h("label", { class: "small inline" }, crossBox, " Only when it crosses the level",
+      infoTip("Ticked: the price has to come from the other side of your level, so a market already past it doesn't fire straight away. Unticked: any touch of the level counts."));
+    const add = h("button", { class: "primary", type: "button" }, editing ? "Save changes" : "Add alert");
+    const cancel = editing ? h("button", { type: "button", onclick: () => renderAlerts() }, "Cancel") : null;
     add.addEventListener("click", async () => {
       if (isBlank(price)) { toast("Fill in the price, or click the chart", true); return; }
+      if (opts.repeat === "every" && isBlank(opts.cooldown)) { toast("Fill in the cooldown", true); return; }
+      const body = { market, direction: dir.v, price, note: note.value, repeat: opts.repeat, cooldown_minutes: opts.cooldown || 0, cross: opts.cross };
       try {
-        await POST("/price-alerts", { market, direction: dir.v, price, note: note.value });
-        toast("Alert added"); renderAlerts(); load();
+        if (editing) { await PUT(`/price-alerts/${editing.id}`, { ...body, active: true }); toast("Alert updated"); }
+        else { await POST("/price-alerts", body); toast("Alert added"); }
+        renderAlerts(); load();
       } catch (e) { toast(e.message, true); }
     });
-    const row = (a) => h("li", { class: a.active ? "" : "done" },
-      h("div", {}, h("strong", {}, `${a.direction === "above" ? "Above" : "Below"} ${fmtPrice(a.price, priceDigits(a.price))}`),
+    const distance = (a, d) => {
+      /* "3.2 pts away (0.15%)", from the latest close of this market's chart */
+      if (!d || a.market !== market || !a.active) return "";
+      const last = d.candles[d.candles.length - 1][4], diff = a.price - last, dg = priceDigits(a.price);
+      const past = a.direction === "above" ? diff <= 0 : diff >= 0;
+      return past ? ` · at or past the level now (${fmtPrice(last, dg)})` : ` · ${fmtPrice(Math.abs(diff), dg)} away (${num((Math.abs(diff) / last) * 100, 2)}%)`;
+    };
+    const distEls = [];
+    alertList.update = (d) => { for (const [el, a] of distEls) el.textContent = distance(a, d); };
+    const rearm = (a) => PUT(`/price-alerts/${a.id}`, { direction: a.direction, price: a.price, note: a.note, active: true,
+      repeat: a.repeat, cooldown_minutes: a.cooldown_minutes, cross: !!a.cross });
+    const row = (a) => {
+      const dist = h("span", {}, distance(a, lastData));
+      distEls.push([dist, a]);
+      const how = `${a.cross ? "Crosses" : "Goes"} ${a.direction} ${fmtPrice(a.price, priceDigits(a.price))}`;
+      const times = a.repeat === "every" ? ` · every time (${a.cooldown_minutes} min cooldown)` + (a.fired_count ? `, fired ${a.fired_count}×` : "") : "";
+      return h("li", { class: a.active ? "" : "done" },
+      h("div", {}, h("strong", {}, how),
         a.market !== market ? h("span", { class: "muted" }, ` · ${a.label}`) : null,
-        h("div", { class: "small muted" }, a.active ? `Waiting · set ${when(a.created_at)}` : `Hit ${when(a.triggered_at)}`,
-          a.note ? ` · ${a.note}` : "")),
+        h("div", { class: "small muted" }, a.active ? `Waiting · set ${when(a.created_at)}` : `Hit ${when(a.triggered_at)}`, times,
+          a.active && a.last_fired_at ? ` · last hit ${when(a.last_fired_at)}` : "", dist, a.note ? ` · ${a.note}` : "")),
       h("span", { class: "inline" },
+        a.active ? h("button", { type: "button", class: "quiet", onclick: () => renderAlerts(a) }, "Edit") : null,
         a.active ? null : h("button", { type: "button", class: "quiet", onclick: async () => {
-          await PUT(`/price-alerts/${a.id}`, { direction: a.direction, price: a.price, note: a.note, active: true });
-          toast("Alert switched back on"); renderAlerts(); load();
+          try { await rearm(a); toast("Alert switched back on"); renderAlerts(); load(); } catch (e) { toast(e.message, true); }
         } }, "Re-arm"),
         h("button", { type: "button", class: "quiet icon", "aria-label": "Delete alert", title: "Delete", onclick: (ev) => {
           const li = ev.target.closest("li");
           undoable("Alert deleted", (on) => { li.hidden = on; }, async () => { await DEL(`/price-alerts/${a.id}`); load(); });
         } }, "✕")));
+    };
     clear(alertsBox);
     append(alertsBox, [
-      h("section", { class: "section" }, h("h2", {}, "Price alerts"),
+      h("section", { class: "section" }, h("h2", {}, editing ? "Edit alert" : "Price alerts"),
         h("p", { class: "section-note" }, `Get a phone alert when ${marketByKey(market).label} reaches a price. Checked every ${res.poll_minutes} minutes by the live checker, on 5-minute candles, so a quick touch still counts.`),
-        h("div", { class: "alert-form" }, dirSeg, h("div", { class: "inline" }, priceIn, add), note)),
+        h("div", { class: "alert-form" }, dirSeg, h("div", { class: "inline" }, priceIn, add, cancel), crossLbl,
+          h("div", { class: "inline" }, repeatSel, cooldownWrap), note)),
       h("section", { class: "section" },
         mine.length ? h("ul", { class: "alert-list" }, mine.map(row)) : h("p", { class: "muted small" }, "No alerts for this market yet."),
         others.length ? [h("h3", { class: "picker-group" }, "Other markets"), h("ul", { class: "alert-list" }, others.map(row))] : null),
@@ -165,7 +205,7 @@ async function viewMarkets() {
     h("div", { class: "editor live-layout" },
       h("div", { class: "panel" }, h("section", { class: "section" },
         h("div", { class: "live-controls" }, marketSel, tfSeg, overlaySel, makeLink),
-        h("div", { class: "live-head" }, priceBig, status), chartBox)),
+        h("div", { class: "live-head" }, priceBig, status), qualityBox, chartBox)),
       h("div", { class: "side" }, h("div", { class: "panel" }, alertsBox)))]);
   clear($main).appendChild(page);
   every(30, () => { if (!document.hidden) load(); });

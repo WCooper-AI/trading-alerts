@@ -65,7 +65,12 @@ CREATE TABLE IF NOT EXISTS price_alerts (
     checked_to TEXT,
     triggered_at TEXT,
     triggered_price REAL,
-    active INTEGER NOT NULL DEFAULT 1
+    active INTEGER NOT NULL DEFAULT 1,
+    repeat TEXT NOT NULL DEFAULT 'once',
+    cooldown_minutes INTEGER NOT NULL DEFAULT 60,
+    cross INTEGER NOT NULL DEFAULT 0,
+    fired_count INTEGER NOT NULL DEFAULT 0,
+    last_fired_at TEXT
 );
 CREATE TABLE IF NOT EXISTS journal (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,6 +87,10 @@ CREATE TABLE IF NOT EXISTS journal (
     strategy_id TEXT,
     paper_trade_id INTEGER,
     notes TEXT,
+    tags TEXT,
+    setup TEXT,
+    followed_plan INTEGER,
+    mood TEXT,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS news_notes (
@@ -138,7 +147,14 @@ class StateStore:
                                  ("paper_trades", "funding", "REAL"), ("paper_trades", "spread_cost", "REAL"),
                                  ("runs", "source_hash", "TEXT"), ("runs", "strategy_yaml", "TEXT"),
                                  ("paper_trades", "mae_r", "REAL"), ("paper_trades", "mfe_r", "REAL"),
-                                 ("paper_trades", "entry_reason", "TEXT"), ("paper_trades", "exit_values", "TEXT")):
+                                 ("paper_trades", "entry_reason", "TEXT"), ("paper_trades", "exit_values", "TEXT"),
+                                 ("price_alerts", "repeat", "TEXT NOT NULL DEFAULT 'once'"),
+                                 ("price_alerts", "cooldown_minutes", "INTEGER NOT NULL DEFAULT 60"),
+                                 ("price_alerts", "cross", "INTEGER NOT NULL DEFAULT 0"),
+                                 ("price_alerts", "fired_count", "INTEGER NOT NULL DEFAULT 0"),
+                                 ("price_alerts", "last_fired_at", "TEXT"),
+                                 ("journal", "tags", "TEXT"), ("journal", "setup", "TEXT"),
+                                 ("journal", "followed_plan", "INTEGER"), ("journal", "mood", "TEXT")):
             cols = [r[1] for r in self.db.execute(f"PRAGMA table_info({table})")]
             if cols and col not in cols:
                 self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {kind}")
@@ -304,10 +320,12 @@ class StateStore:
             q += " AND active = 1"
         return [dict(r) for r in self.db.execute(q + " ORDER BY id DESC", args)]
 
-    def add_price_alert(self, market: str, label: str, direction: str, price: float, note: str = "") -> dict:
+    def add_price_alert(self, market: str, label: str, direction: str, price: float, note: str = "",
+                        repeat: str = "once", cooldown_minutes: int = 60, cross: bool = False) -> dict:
         cur = self.db.execute(
-            "INSERT INTO price_alerts (market, label, direction, price, note, created_at, checked_to) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)", (market, label, direction, price, note, _now(), _now()))
+            "INSERT INTO price_alerts (market, label, direction, price, note, created_at, checked_to, repeat, "
+            "cooldown_minutes, cross) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (market, label, direction, price, note, _now(), _now(), repeat, int(cooldown_minutes), 1 if cross else 0))
         self.db.commit()
         return self.price_alert(cur.lastrowid)
 
@@ -316,7 +334,8 @@ class StateStore:
         return dict(r) if r else None
 
     def update_price_alert(self, alert_id: int, **fields) -> None:
-        allowed = {"direction", "price", "note", "checked_to", "triggered_at", "triggered_price", "active"}
+        allowed = {"direction", "price", "note", "checked_to", "triggered_at", "triggered_price", "active",
+                   "repeat", "cooldown_minutes", "cross", "fired_count", "last_fired_at"}
         sets = {k: v for k, v in fields.items() if k in allowed}
         if not sets:
             return
@@ -360,7 +379,8 @@ class StateStore:
     # ------------------------------------------------------------------ trade journal
 
     JOURNAL_COLS = ("market", "direction", "entry_time", "entry_price", "exit_time", "exit_price", "size",
-                    "point_value", "fees", "currency", "strategy_id", "paper_trade_id", "notes")
+                    "point_value", "fees", "currency", "strategy_id", "paper_trade_id", "notes",
+                    "tags", "setup", "followed_plan", "mood")
 
     def journal(self) -> list[dict]:
         return [dict(r) for r in self.db.execute("SELECT * FROM journal ORDER BY entry_time DESC, id DESC")]

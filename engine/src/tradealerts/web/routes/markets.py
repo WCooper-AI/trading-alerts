@@ -8,7 +8,7 @@ import zoneinfo
 import pandas as pd
 from fastapi import APIRouter, Body, Depends, Request
 
-from ... import compute, markethours, timeframes
+from ... import compute, dataquality, markethours, timeframes
 from ... import data as data_mod
 from ...recipes import MARKETS, MARKETS_BY_KEY
 from ...workspace import Workspace
@@ -119,7 +119,8 @@ def candles(request: Request, market: str = "", strategy: str = "", timeframe: s
            "forming": bool(df.index[-1] + bar > pd.Timestamp.now(tz="UTC")),
            "spread": float(df["spread"].iloc[-1]) if "spread" in df.columns and pd.notna(df["spread"].iloc[-1]) else None,
            "marks": [], "alerts": [], "stale": stale, "feed": feed, "age_minutes": age_minutes,
-           "closed_until": closed_until.isoformat() if closed_until is not None else None}
+           "closed_until": closed_until.isoformat() if closed_until is not None else None,
+           "quality": dataquality.check(df.iloc[-bars:], tf, now)}
     first = df.index[-min(bars, len(df))]
     with ws.store(create=False) as store:
         if s is not None:
@@ -150,7 +151,14 @@ def checked_alert(body: dict) -> dict:
     price = body.get("price")
     if isinstance(price, bool) or not isinstance(price, (int, float)) or price <= 0:
         err(422, "Fill in the price")
-    return {"direction": direction, "price": float(price), "note": str(body.get("note") or "")[:200]}
+    repeat = body.get("repeat") or "once"
+    if repeat not in ("once", "every"):
+        err(422, "Choose once or every time")
+    cooldown = body.get("cooldown_minutes", 60)
+    if isinstance(cooldown, bool) or not isinstance(cooldown, (int, float)) or not 0 <= cooldown <= 7 * 24 * 60:
+        err(422, "The cooldown must be between 0 minutes and 7 days")
+    return {"direction": direction, "price": float(price), "note": str(body.get("note") or "")[:200],
+            "repeat": repeat, "cooldown_minutes": int(cooldown), "cross": bool(body.get("cross", False))}
 
 
 @router.get("/api/price-alerts")
@@ -170,7 +178,8 @@ def add_price_alert(body: dict = Body(...), ws: Workspace = Depends(workspace)):
         limit = ws.limits.max_price_alerts
         if limit is not None and len(store.price_alerts(active_only=True)) >= limit:
             err(409, f"You have {limit} price alerts waiting, the most this plan allows. Remove one first.")
-        return clean(store.add_price_alert(mk["key"], mk["label"], a["direction"], a["price"], a["note"]))
+        return clean(store.add_price_alert(mk["key"], mk["label"], a["direction"], a["price"], a["note"],
+                                           a["repeat"], a["cooldown_minutes"], a["cross"]))
 
 
 @router.put("/api/price-alerts/{alert_id}")
@@ -186,8 +195,8 @@ def edit_price_alert(alert_id: int, body: dict = Body(...), ws: Workspace = Depe
             err(409, f"You have {limit} price alerts waiting, the most this plan allows. Remove one first.")
         now = pd.Timestamp.now(tz="UTC").isoformat(timespec="seconds")
         # editing or switching back on re-arms it from now
-        store.update_price_alert(alert_id, **a, active=1 if active else 0, checked_to=now,
-                                 triggered_at=None, triggered_price=None)
+        store.update_price_alert(alert_id, **{**a, "cross": 1 if a["cross"] else 0}, active=1 if active else 0,
+                                 checked_to=now, triggered_at=None, triggered_price=None, last_fired_at=None)
         return clean(store.price_alert(alert_id))
 
 
