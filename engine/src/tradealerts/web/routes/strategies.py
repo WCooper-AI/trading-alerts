@@ -176,6 +176,36 @@ def validate_draft(body: dict = Body(...), ws: Workspace = Depends(workspace)):
     return {"ok": True, "error": None}
 
 
+@router.post("/api/yaml")
+def to_yaml(body: dict = Body(...)):
+    """The editor's data as the YAML it would be saved as (Advanced: Edit YAML)."""
+    data = body.get("data")
+    if not isinstance(data, dict):
+        err(422, "Nothing to show")
+    return {"yaml": dump_strategy(data)}
+
+
+@router.post("/api/yaml/parse")
+def from_yaml(body: dict = Body(...), ws: Workspace = Depends(workspace)):
+    """YAML typed in the editor, back to data; also checks the rules. Never raises for user mistakes."""
+    text = body.get("yaml")
+    if not isinstance(text, str) or len(text) > 200_000:
+        return {"ok": False, "error": "Nothing to read", "data": None}
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        mark = getattr(exc, "problem_mark", None)
+        where = f" (line {mark.line + 1})" if mark else ""
+        return {"ok": False, "error": f"Not valid YAML{where}: {getattr(exc, 'problem', exc)}", "data": None}
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "A strategy is a set of named settings (name, market, entry, ...)", "data": None}
+    try:
+        validate(ws, data)
+    except HTTPException as exc:
+        return {"ok": False, "error": exc.detail, "data": data}
+    return {"ok": True, "error": None, "data": data}
+
+
 @router.post("/api/strategies", status_code=201)
 def create_strategy(request: Request, body: dict = Body(...), ws: Workspace = Depends(workspace)):
     data = tidy_recipe(body.get("data"))

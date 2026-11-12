@@ -38,6 +38,23 @@ def backtest(request: Request, body: dict = Body(...), ws: Workspace = Depends(w
     return out
 
 
+@router.post("/api/signals/count")
+def count_signals(request: Request, body: dict = Body(...), ws: Workspace = Depends(workspace)):
+    """How often the entry rules fired on past data, without running the trade simulator."""
+    s = validate(ws, body.get("data"))
+    df, _fine, test_start, notes = load_period(ctx_of(request), ws, s, body)
+    p = s.prepare(df)
+    mask = (df.index >= test_start) if test_start is not None else df.index == df.index
+    entry = p.entry[mask]
+    return {
+        "signals": int(entry.sum()),
+        "candles": int(mask.sum()),
+        "start": df.index[mask][0].isoformat() if mask.any() else None,
+        "end": df.index[mask][-1].isoformat() if mask.any() else None,
+        "notes": notes,
+    }
+
+
 SOURCE_NAMES = {"dukascopy": "Dukascopy", "yahoo": "Yahoo Finance", "oanda": "OANDA", "csv": "CSV file"}
 
 
