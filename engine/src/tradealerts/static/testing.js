@@ -480,6 +480,25 @@ function testStamp(meta, sym) {
  * band: optional [[isoTime, p10, p25, p50, p75, p90], ...] drawn behind the line.
  */
 let gradSeq = 0;
+
+/** 3-4 horizontal gridlines at round values, labelled on the right, behind the line. */
+function gridlines(s, lo, hi, y, fmt, W, P) {
+  const span = hi - lo;
+  if (!(span > 0) || !isFinite(span)) return;
+  const rough = span / 3.5;
+  const mag = 10 ** Math.floor(Math.log10(rough));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((v) => v >= rough) || mag * 10;
+  const inset = P + 10;  // keep labels clear of the rounded top and bottom edges
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) {
+    const yy = y(v);
+    if (yy < inset || yy > s.viewBox.baseVal.height - inset) continue;
+    s.appendChild(svg("line", { x1: P, x2: W - P, y1: yy.toFixed(1), y2: yy.toFixed(1), class: "chart-grid" }));
+    const t = svg("text", { x: W - P - 4, y: (yy - 3).toFixed(1), "text-anchor": "end", class: "chart-grid-label" });
+    t.textContent = fmt(v);
+    s.appendChild(t);
+  }
+}
+
 function lineChart(points, { title, fmt, baseline = null, tone = "ink", fill = true, height = 170, timeX = false, band = null }) {
   const W = 560, H = height, P = 6;
   const wrap = h("div", { class: "chart" });
@@ -513,6 +532,7 @@ function lineChart(points, { title, fmt, baseline = null, tone = "ink", fill = t
     s.appendChild(svg("path", { d: area(2, 4), class: "band inner" }));
     s.appendChild(svg("path", { d: bandRows.map((b, i) => `${i ? "L" : "M"}${bx(b)},${y(b[3]).toFixed(1)}`).join(""), class: "band-mid" }));
   }
+  gridlines(s, lo, hi, y, fmt, W, P);
   if (baseline !== null) s.appendChild(svg("line", { x1: P, x2: W - P, y1: y(baseline), y2: y(baseline), class: "chart-base", "stroke-dasharray": "4 4" }));
   if (fill) {
     const gid = "g" + ++gradSeq;

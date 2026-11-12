@@ -20,6 +20,7 @@ function multiChart(series, { title, fmt }) {
   const y = (v) => P + ((hi - v) * (H - 2 * P)) / (hi - lo);
   const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": title });
   s.appendChild(svg("rect", { x: 0, y: 0, width: W, height: H, rx: 14, class: "chart-bg" }));
+  gridlines(s, lo, hi, y, fmt, W, P);
   s.appendChild(svg("line", { x1: P, x2: W - P, y1: y(0), y2: y(0), class: "chart-base", "stroke-dasharray": "4 4" }));
   series.forEach((ser, i) => {
     const d = ser.points.map((p, k) => `${k ? "L" : "M"}${x(new Date(p[0]).getTime()).toFixed(1)},${y(p[1]).toFixed(1)}`).join("");
