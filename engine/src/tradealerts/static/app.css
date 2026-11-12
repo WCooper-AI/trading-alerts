@@ -476,6 +476,24 @@ details[open] > summary::before { transform: rotate(45deg); }
 .checks .pass .check-icon { background: color-mix(in srgb, var(--gain) 18%, transparent); color: var(--gain); }
 .checks .fail .check-icon { background: color-mix(in srgb, var(--loss) 16%, transparent); color: var(--loss); }
 .checks .skip .check-icon { background: var(--glass-thin); color: var(--muted); }
+.checks .next-step { margin-top: .35rem; }
+.headline.compact { margin: .4rem 0 .8rem; gap: 1.2rem; }
+.headline.compact .big { font-size: var(--step-1); }
+.chart-pair { display: grid; gap: 1rem; }
+@media (min-width: 1100px) { .chart-pair { grid-template-columns: 1fr 1fr; } }
+table.monthly { border-collapse: collapse; font-size: var(--step--1); white-space: nowrap; }
+table.monthly th, table.monthly td { padding: .3rem .45rem; border-bottom: 1px solid var(--line-soft); }
+table.monthly th { color: var(--muted); font-weight: 580; text-align: left; }
+table.monthly th.num, table.monthly td.num { text-align: right; }
+table.monthly td.empty { color: var(--muted); }
+table.monthly .ytd { border-left: 1px solid var(--line-soft); font-weight: 650; }
+.conditions { list-style: none; margin: 0; padding: 0; display: grid; gap: .4rem; }
+.conditions li { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; align-items: baseline; padding: .45rem .7rem; border-radius: 12px; background: var(--glass-thin); border: 1px solid var(--line-soft); }
+.conditions li p { margin: 0; }
+.conditions li .count { color: var(--muted); font-size: var(--step--1); }
+.conditions li.lowest { border-color: var(--loss); }
+.conditions li.lowest .count { color: var(--loss); font-weight: 650; }
+.conditions .depth-1 { margin-left: 1rem; } .conditions .depth-2 { margin-left: 2rem; } .conditions .depth-3 { margin-left: 3rem; } .conditions .depth-4 { margin-left: 4rem; }
 .checks p { margin-top: .15rem; }
 
 /* ================================================================== charts */
@@ -505,6 +523,7 @@ details[open] > summary::before { transform: rotate(45deg); }
 .bar { animation: fade .5s var(--ease) backwards; }
 .bar.gain { fill: var(--gain); fill-opacity: .85; }
 .bar.loss { fill: var(--loss); fill-opacity: .85; }
+.bar.ink { fill: var(--accent); fill-opacity: .75; }
 .bar.current { stroke: var(--ink); stroke-width: 1.5; }
 .bar-label { fill: var(--muted); font-size: 11px; font-family: var(--font); }
 .bar-label.strong { fill: var(--ink); font-weight: 650; }

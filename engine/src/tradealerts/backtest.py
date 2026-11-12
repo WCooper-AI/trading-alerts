@@ -150,19 +150,143 @@ def compute_metrics(strategy: Strategy, trades: pd.DataFrame, equity: pd.Series,
     if len(trades):
         pnl = trades["pnl"]
         wins, losses = pnl[pnl > 0], pnl[pnl <= 0]
-        streak = longest = 0
-        for v in pnl:
-            streak = streak + 1 if v <= 0 else 0
-            longest = max(longest, streak)
+        loss_sum = float(-losses.sum())
         m.update(
             win_rate_pct=len(wins) / len(pnl) * 100,
             avg_win=float(wins.mean()) if len(wins) else 0.0,
             avg_loss=float(losses.mean()) if len(losses) else 0.0,
-            profit_factor=float(wins.sum() / -losses.sum()) if losses.sum() < 0 else None,  # None: no losing trades
+            # None: no losing trades (nothing to divide by), never a division error
+            profit_factor=float(wins.sum() / loss_sum) if loss_sum > 0 else None,
             expectancy=float(pnl.mean()),
             avg_r=float(trades["r_multiple"].mean()),
             avg_bars_held=float(trades["bars_held"].mean()),
-            longest_losing_streak=int(longest),
+            longest_losing_streak=streaks(pnl)[1],
+            longest_winning_streak=streaks(pnl)[0],
+            largest_win=float(pnl.max()),
+            largest_loss=float(pnl.min()),
+            avg_hold_hours=hold_hours(trades),
             exit_reasons=trades["exit_reason"].value_counts().to_dict(),
+            r_histogram=histogram(trades["r_multiple"].to_numpy(dtype=float), R_EDGES),
+            hold_histogram=hold_histogram(trades),
         )
+    m.update(risk_ratios(equity, strategy.market.timeframe))
+    m["longest_underwater_days"] = longest_underwater_days(equity)
+    m["monthly_returns"] = monthly_returns(equity)
     return m
+
+
+# --------------------------------------------------------------------------- deeper metrics
+
+R_EDGES = [-3, -2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2, 3, 4]
+HOLD_EDGES_HOURS = [1, 2, 4, 8, 24, 48, 96, 168]  # 1h ... 1 week
+
+
+def streaks(pnl: pd.Series) -> tuple[int, int]:
+    """(longest run of winning trades, longest run of losing trades), in trade order."""
+    best_w = best_l = win = loss = 0
+    for v in pnl:
+        if v > 0:
+            win, loss = win + 1, 0
+        else:
+            win, loss = 0, loss + 1
+        best_w, best_l = max(best_w, win), max(best_l, loss)
+    return best_w, best_l
+
+
+def hold_times(trades: pd.DataFrame) -> pd.Series:
+    """How long each trade was open, as hours (empty when the trades carry no times)."""
+    if "entry_time" not in trades or "exit_time" not in trades:
+        return pd.Series(dtype=float)
+    entry = pd.to_datetime(trades["entry_time"], utc=True)
+    exit_ = pd.to_datetime(trades["exit_time"], utc=True)
+    return (exit_ - entry) / pd.Timedelta(hours=1)
+
+
+def hold_hours(trades: pd.DataFrame) -> float:
+    ht = hold_times(trades)
+    return float(ht.mean()) if len(ht) else 0.0
+
+
+def histogram(values: np.ndarray, edges: list[float]) -> list[dict]:
+    """Counts per bucket: below the first edge, between each pair, and above the last."""
+    bins = [-np.inf, *edges, np.inf]
+    counts, _ = np.histogram(values, bins=bins)
+    out = []
+    for i, c in enumerate(counts):
+        lo = None if i == 0 else edges[i - 1]
+        hi = None if i == len(counts) - 1 else edges[i]
+        out.append({"from": lo, "to": hi, "count": int(c)})
+    return out
+
+
+def hold_histogram(trades: pd.DataFrame) -> list[dict]:
+    return histogram(hold_times(trades).to_numpy(dtype=float), HOLD_EDGES_HOURS)
+
+
+def risk_ratios(equity: pd.Series, timeframe: str) -> dict:
+    """Sharpe and Sortino ratios from candle-to-candle changes in the balance, annualised
+    assuming the market trades about 252 days a year. None when there is too little
+    variation to measure (e.g. no trades)."""
+    out = {"sharpe": None, "sortino": None}
+    if len(equity) < 3:
+        return out
+    r = equity.pct_change().dropna().to_numpy(dtype=float)
+    if len(r) < 2:
+        return out
+    bar = timeframes.to_timedelta(timeframe)
+    per_year = (pd.Timedelta(days=252) / bar) if bar <= pd.Timedelta(days=1) else (pd.Timedelta(days=365) / bar)
+    scale = float(np.sqrt(per_year))
+    mean = float(r.mean())
+    sd = float(r.std(ddof=1))
+    if sd > 0:
+        out["sharpe"] = mean / sd * scale
+    down = np.minimum(r, 0.0)
+    dsd = float(np.sqrt((down ** 2).mean()))
+    if dsd > 0:
+        out["sortino"] = mean / dsd * scale
+    return out
+
+
+def longest_underwater_days(equity: pd.Series) -> float:
+    """Longest stretch (days) the balance stayed below an earlier high."""
+    if len(equity) < 2:
+        return 0.0
+    peak = equity.cummax()
+    under = (equity < peak).to_numpy()
+    idx = equity.index
+    longest = pd.Timedelta(0)
+    start = None
+    for i, u in enumerate(under):
+        if u and start is None:
+            start = idx[i - 1] if i else idx[i]  # from the high just before the drop
+        elif not u and start is not None:
+            longest = max(longest, idx[i] - start)
+            start = None
+    if start is not None:
+        longest = max(longest, idx[-1] - start)
+    return float(longest / pd.Timedelta(days=1))
+
+
+def monthly_returns(equity: pd.Series) -> list[dict]:
+    """% change of the balance per calendar month, grouped by year, with a year-to-date column
+    (the change over that year's months in the test)."""
+    if len(equity) < 2:
+        return []
+    eq = equity.copy()
+    if eq.index.tz is None:
+        eq.index = eq.index.tz_localize("UTC")
+    ends = eq.resample("ME").last().dropna()
+    starts = ends.shift(1)
+    starts.iloc[0] = float(eq.iloc[0])  # the first month starts from the opening balance
+    pct = (ends / starts - 1) * 100
+    out: dict[int, dict] = {}
+    for stamp, v in pct.items():
+        y = out.setdefault(int(stamp.year), {"year": int(stamp.year), "months": [None] * 12, "ytd": 0.0})
+        y["months"][int(stamp.month) - 1] = float(v)
+    for y in out.values():
+        growth = 1.0
+        for v in y["months"]:
+            if v is not None:
+                growth *= 1 + v / 100
+        y["ytd"] = (growth - 1) * 100
+    return [out[k] for k in sorted(out)]

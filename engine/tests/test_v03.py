@@ -455,3 +455,132 @@ def test_candles_feed_status_fresh_delayed_saved(client, ws, monkeypatch):
     r = client.get(f"/api/candles?strategy={sid2}&bars=50")
     assert r.status_code == 200, r.text
     assert r.json()["feed"] == "saved" and r.json()["stale"] is True
+
+
+# --------------------------------------------------------------------------- session 5: deeper metrics, Monte Carlo, diagnostics
+
+
+def test_deeper_metrics_in_backtest_payload(client):
+    r = client.post("/api/backtest", json={"data": CSV_STRATEGY}, headers=H).json()
+    m = r["metrics"]
+    assert m["trades"] > 1
+    for k in ("sharpe", "sortino", "longest_winning_streak", "longest_losing_streak", "largest_win", "largest_loss",
+              "avg_hold_hours", "longest_underwater_days", "monthly_returns", "r_histogram", "hold_histogram"):
+        assert k in m, k
+    assert m["largest_win"] >= max(t["pnl"] for t in r["trades"]) - 1e-9
+    assert m["largest_loss"] <= min(t["pnl"] for t in r["trades"]) + 1e-9
+    assert m["avg_hold_hours"] > 0 and m["longest_underwater_days"] >= 0
+    assert sum(b["count"] for b in m["r_histogram"]) == m["trades"]
+    assert sum(b["count"] for b in m["hold_histogram"]) == m["trades"]
+    assert m["r_histogram"][0]["from"] is None and m["r_histogram"][-1]["to"] is None
+    # monthly grid: a row per year, 12 month slots, year-to-date compounds the months in the test
+    years = m["monthly_returns"]
+    assert years and all(len(y["months"]) == 12 for y in years)
+    growth = 1.0
+    for y in years:
+        for v in y["months"]:
+            if v is not None:
+                growth *= 1 + v / 100
+    assert growth - 1 == pytest.approx(m["total_return_pct"] / 100, abs=1e-6)
+    # Monte Carlo: the percentiles are ordered and the actual drawdown is a real drawdown
+    mc = r["monte_carlo"]
+    assert mc["runs"] >= 500 and mc["p5"] <= mc["p50"] <= mc["p95"] <= 0
+    assert sum(b["count"] for b in mc["histogram"]) == mc["runs"]
+    assert "why_no_trades" not in r
+
+
+def test_metric_helpers_edge_cases():
+    import numpy as np
+    import pandas as pd
+    from tradealerts.backtest import histogram, longest_underwater_days, monthly_returns, risk_ratios, streaks
+
+    assert streaks(pd.Series([1.0, 2.0, -1.0, -1.0, -1.0, 3.0])) == (2, 3)
+    assert streaks(pd.Series([], dtype=float)) == (0, 0)
+    assert [b["count"] for b in histogram(np.array([-2.0, 0.2, 5.0]), [-1, 0, 1])] == [1, 0, 1, 1]
+    flat = pd.Series(1000.0, index=pd.date_range("2024-01-01", periods=10, freq="1h", tz="UTC"))
+    assert risk_ratios(flat, "1h") == {"sharpe": None, "sortino": None}
+    assert longest_underwater_days(flat) == 0.0
+    # a dip from hour 2 to hour 6 lasts 4 hours below the earlier high
+    dip = flat.copy()
+    dip.iloc[3:6] = 990.0
+    assert longest_underwater_days(dip) == pytest.approx(4 / 24)
+    rising = pd.Series(np.linspace(1000, 1100, 10), index=flat.index)
+    rr = risk_ratios(rising, "1h")
+    assert rr["sharpe"] is not None and rr["sortino"] is None  # no down moves: nothing to divide by
+    assert monthly_returns(flat.iloc[:1]) == []
+    two = pd.Series([1000.0, 1010.0, 1111.0], index=pd.to_datetime(["2024-01-31", "2024-02-15", "2024-02-29"], utc=True))
+    grid = monthly_returns(two)
+    assert grid[0]["year"] == 2024 and grid[0]["months"][0] == pytest.approx(0.0) and grid[0]["months"][1] == pytest.approx(11.1)
+    assert grid[0]["ytd"] == pytest.approx(11.1)
+
+
+def test_profit_factor_never_divides_by_zero():
+    import pandas as pd
+    from tests.test_simulator_backtest import make_strategy
+    from tradealerts.backtest import compute_metrics
+    from tradealerts.sample import synthetic_bars
+
+    bars = synthetic_bars(days=3, freq="1h", seed=1)
+    eq = pd.Series(1000.0, index=bars.index)
+    zero_loss = pd.DataFrame({"pnl": [10.0, 0.0], "r_multiple": [1.0, 0.0], "bars_held": [3, 4], "exit_reason": ["target", "time"],
+                              "funding": [0.0, 0.0], "spread_cost": [0.0, 0.0]})
+    m = compute_metrics(make_strategy(), zero_loss, eq, bars, 0)
+    assert m["profit_factor"] is None and m["avg_hold_hours"] == 0.0  # a zero-P/L trade counts as a loss worth nothing
+
+
+def test_monte_carlo_shuffle():
+    import numpy as np
+    import pandas as pd
+    from tradealerts.analysis import monte_carlo
+
+    assert monte_carlo(pd.DataFrame({"pnl": [5.0], "equity_after": [1005.0]}), 1000.0) is None
+    pnl = [50.0, -40.0, 60.0, -30.0, 20.0, -45.0, 70.0, -20.0]
+    eq_after = 1000.0 + np.cumsum(pnl)
+    mc = monte_carlo(pd.DataFrame({"pnl": pnl, "equity_after": eq_after}), 1000.0, np.random.default_rng(1), runs=500)
+    assert mc["runs"] == 500 and mc["p5"] <= mc["p50"] <= mc["p95"] <= 0
+    assert mc["p5"] <= mc["actual_dd"] <= 0  # the worst 1-in-20 order is at least as bad as this one
+    assert mc["bad_dd"] == mc["p5"] and mc["median_dd"] == mc["p50"]  # luck check keeps its old field names
+
+
+def test_why_no_trades_counts_each_condition(client):
+    impossible = {"left": "close", "op": ">", "right": 1e9}
+    entry = {"all": [{"left": {"indicator": "rsi", "period": 14}, "op": ">", "right": 20}, impossible]}
+    r = client.post("/api/backtest", json={"data": edited(entry=entry)}, headers=H).json()
+    assert r["trade_count"] == 0 and r["monte_carlo"] is None
+    why = r["why_no_trades"]
+    rows = why["conditions"]
+    assert [x["path"] for x in rows] == ["entry", "entry.all[0]", "entry.all[1]"]
+    assert rows[0]["kind"] == "all" and rows[0]["matched"] == 0
+    assert rows[1]["kind"] == "leaf" and 0 < rows[1]["matched"] <= why["candles"]
+    assert rows[2]["matched"] == 0 and rows[2]["condition"] == impossible
+    assert all(x["candles"] == why["candles"] for x in rows)
+    assert r["metrics"]["sharpe"] is None and "r_histogram" not in r["metrics"]
+
+
+def test_why_no_trades_walks_nested_groups():
+    import pandas as pd
+    from tradealerts.analysis import condition_counts
+    from tradealerts.sample import synthetic_bars
+
+    bars = synthetic_bars(days=20, freq="1h", seed=2)
+    spec = {"all": [{"not": {"left": "close", "op": ">", "right": 1e9}}, {"any": [{"weekdays": ["mon"]}, {"weekdays": ["tue"]}]}]}
+    since = bars.index[100]
+    rows = condition_counts(spec, bars, since)
+    assert [x["path"] for x in rows] == ["entry", "entry.all[0]", "entry.all[0].not", "entry.all[1]", "entry.all[1].any[0]", "entry.all[1].any[1]"]
+    assert [x["depth"] for x in rows] == [0, 1, 2, 1, 2, 2]
+    n = int((bars.index >= since).sum())
+    assert rows[0]["candles"] == n and rows[2]["matched"] == 0 and rows[1]["matched"] == n
+    assert rows[3]["matched"] == rows[4]["matched"] + rows[5]["matched"]
+
+
+def test_luck_check_failed_items_carry_next_steps(client):
+    res = client.post("/api/luck", json={"data": CSV_STRATEGY}, headers=H).json()
+    for c in res["checks"]:
+        if c["passed"] is False:
+            assert c["next_step"], c["key"]
+            assert not any(w in c["next_step"].lower() for w in ("broken", "degraded", "bad", "should"))
+        else:
+            assert c["next_step"] is None
+    assert any(c["passed"] is False for c in res["checks"])  # the 90-day CSV sample has too few trades
+    o = res["order"]
+    assert o["p5"] <= o["p50"] <= o["p95"] and "histogram" in o

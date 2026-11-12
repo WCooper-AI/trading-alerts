@@ -143,7 +143,7 @@ def backtest(data: dict, df, fine, test_start, notes: list[str]) -> dict:
     period = df.loc[eq.index[0]:] if len(eq) else df
     # bought at the first candle's open, like the buy-and-hold figure in the metrics
     bench = period["close"] / float(period["open"].iloc[0]) * s.risk.account_size if len(period) else pd.Series(dtype=float)
-    return _clean({
+    out = {
         "chart": {"candles": candles_out(shown, len(shown)), "marks": trade_marks(trades, shown.index[0]) if len(shown) else [],
                   "indicators": chart_indicators(s, df, len(shown)), "timeframe": s.market.timeframe},
         "metrics": res.metrics,
@@ -154,7 +154,11 @@ def backtest(data: dict, df, fine, test_start, notes: list[str]) -> dict:
         "trades": trades,
         "trade_count": len(res.trades),
         "currency": s.risk.symbol,
-    })
+        "monte_carlo": analysis.monte_carlo(res.trades, s.risk.account_size) if len(res.trades) >= 2 else None,
+    }
+    if not len(res.trades):
+        out["why_no_trades"] = analysis.why_no_trades(s, df, test_start)
+    return _clean(out)
 
 
 def sweep(variants: list[tuple], df, fine, test_start, currency: str, notes: list[str]) -> dict:

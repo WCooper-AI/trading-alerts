@@ -37,14 +37,21 @@ def summary_rows(res: BacktestResult) -> list[tuple[str, str]]:
             ("Average win / loss", f"{_money(m['avg_win'], sym)} / {_money(m['avg_loss'], sym)}"),
             ("Profit factor", "No losses" if pf is None else f"{pf:.2f}"),
             ("Average trade", f"{_money(m['expectancy'], sym)} ({m['avg_r']:+.2f}R)"),
-            ("Average bars held", f"{m['avg_bars_held']:.1f}"),
-            ("Longest losing streak", str(m["longest_losing_streak"])),
+            ("Largest win / loss", f"{_money(m['largest_win'], sym)} / {_money(m['largest_loss'], sym)}"),
+            ("Average bars held", f"{m['avg_bars_held']:.1f} ({m['avg_hold_hours']:.1f} hours)"),
+            ("Longest winning / losing streak", f"{m['longest_winning_streak']} / {m['longest_losing_streak']}"),
+            ("Sharpe / Sortino (annualised)", f"{_ratio(m.get('sharpe'))} / {_ratio(m.get('sortino'))}"),
+            ("Longest time below a previous high", f"{m.get('longest_underwater_days', 0):.1f} days"),
             ("Exit reasons", ", ".join(f"{k}: {v}" for k, v in m["exit_reasons"].items())),
             ("Spread paid", _money(m.get("total_spread_cost", 0.0), sym)
              + (" (from the data's bid/ask)" if m.get("used_data_spread") else "")),
             ("Overnight funding paid", _money(m.get("total_funding", 0.0), sym)),
         ]
     return rows
+
+
+def _ratio(v) -> str:
+    return "–" if v is None else f"{v:.2f}"
 
 
 def warnings_for(res: BacktestResult) -> list[str]:
