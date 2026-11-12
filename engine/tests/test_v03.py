@@ -417,3 +417,41 @@ def test_chart_carries_the_indicators_the_rule_reads(client):
     sid = client.post("/api/strategies", json={"data": CSV_STRATEGY}, headers=H).json()["id"]
     c = client.get(f"/api/candles?strategy={sid}&bars=100").json()
     assert c["indicators"][0]["label"] == "RSI(14)" and len(c["indicators"][0]["values"]) == len(c["candles"])
+
+
+# --------------------------------------------------------------------------- markets feed status
+
+
+def test_candles_feed_status_fresh_delayed_saved(client, ws, monkeypatch):
+    import pandas as pd
+
+    from tradealerts.sample import synthetic_bars
+    from tradealerts.web.routes import markets as markets_route
+
+    # the sample CSV stops in 2024: answered, but far behind
+    sid = client.post("/api/strategies", json={"data": CSV_STRATEGY}, headers=H).json()["id"]
+    d = client.get(f"/api/candles?strategy={sid}&bars=50").json()
+    assert d["feed"] == "delayed" and d["age_minutes"] > 60 * 24 * 30
+    # a CSV that runs up to now: fresh
+    recent = synthetic_bars(days=10, freq="1h", seed=2)
+    recent.index = recent.index + (pd.Timestamp.now(tz="UTC").floor("h") - recent.index[-1])
+    recent.to_csv(ws / "data" / "recent.csv")
+    fresh = {**CSV_STRATEGY, "name": "Recent", "market": {**CSV_STRATEGY["market"], "symbol": "data/recent.csv"}}
+    sid2 = client.post("/api/strategies", json={"data": fresh}, headers=H).json()["id"]
+    d = client.get(f"/api/candles?strategy={sid2}&bars=50").json()
+    assert d["feed"] == "fresh" and (d["age_minutes"] or 0) <= 60
+    # the feed stops answering: the saved copy is shown and the badge says so
+    def broken(*a, **k):
+        class P:
+            def fetch_bars(self, *a2, **k2):
+                raise RuntimeError("no answer")
+        return P()
+    monkeypatch.setattr(markets_route.data_mod, "provider_for", broken)
+    import time
+
+    cache = client.app.state.ctx.live_cache
+    for k, (t, v) in list(cache._items.items()):
+        cache._items[k] = (time.monotonic() - cache.ttl - 1, v)  # just expired: the feed is asked again, the copy kept
+    r = client.get(f"/api/candles?strategy={sid2}&bars=50")
+    assert r.status_code == 200, r.text
+    assert r.json()["feed"] == "saved" and r.json()["stale"] is True

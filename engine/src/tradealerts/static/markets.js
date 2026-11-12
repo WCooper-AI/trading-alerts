@@ -86,12 +86,7 @@ async function viewMarkets() {
         h("span", { class: chg >= 0 ? "gain" : "loss" }, ` ${chg >= 0 ? "+" : ""}${fmtPrice(chg, dg)} (${signed((chg / ref) * 100, "%")}) over 24h`),
         d.spread !== null ? h("span", { class: "small muted" }, ` · spread ${fmtPrice(d.spread, dg)}`) : null]);
       clear(status);
-      append(status, d.closed_until
-        ? [h("span", { class: "dot paused" }), `Paused: the market is closed for the weekend, so prices aren't updating. Opens again ${reopenText(d.closed_until)}`]
-        : d.stale
-        ? [h("span", { class: "dot" }), "Showing saved prices: the feed didn't answer, trying again shortly"]
-        : [h("span", { class: "dot on" }), `Live · updated ${new Date(d.updated).toLocaleTimeString("en-GB")}`,
-          d.forming ? " · last candle still forming" : ""]);
+      status.appendChild(feedBadge(d));
       if (!chart) {
         chart = candleChart(d, { onPick: (p) => pricePick.set && pricePick.set(p), title: d.label });
         clear(chartBox).appendChild(chart);
@@ -179,6 +174,27 @@ async function viewMarkets() {
   app.cleanups.push(() => document.removeEventListener("visibilitychange", onVisible));
   load(true); // not awaited: the page is usable (alerts, controls) while the first download runs
   await renderAlerts().catch((e) => toast(e.message, true));
+}
+
+/** Green / amber / red: is the price feed healthy? Same capsule as a forward test's state. */
+function feedBadge(d) {
+  const ago = d.age_minutes === null || d.age_minutes === undefined ? "" : d.age_minutes < 60 ? `${d.age_minutes} min ago`
+    : d.age_minutes < 2880 ? `${Math.round(d.age_minutes / 60)} h ago` : `${Math.round(d.age_minutes / 1440)} days ago`;
+  let cls, label, detail;
+  if (d.feed === "saved") {
+    cls = "attention"; label = "Feed down";
+    detail = "The price feed didn't answer, so these are the prices saved last time. Trying again shortly.";
+  } else if (d.closed_until) {
+    cls = "waiting"; label = `Market shut · opens ${reopenText(d.closed_until)}`;
+    detail = "No new candles while the market is shut. Prices carry on by themselves when it opens.";
+  } else if (d.feed === "delayed") {
+    cls = "delayed"; label = `Delayed · last candle ${ago}`;
+    detail = "The feed answered, but its newest finished candle is older than expected.";
+  } else {
+    cls = "watching"; label = `Live · updated ${new Date(d.updated).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
+    detail = d.forming ? "The last candle is still forming." : "Prices are up to date.";
+  }
+  return h("span", { class: "health " + cls, title: detail }, h("span", { class: "health-dot", "aria-hidden": "true" }), label);
 }
 
 function marketsTabs(active) {

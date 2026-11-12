@@ -102,11 +102,23 @@ def candles(request: Request, market: str = "", strategy: str = "", timeframe: s
     stale = stale or old_age is not None
     shut = markethours.closed_until(symbol)
     closed_until = shut[0] if shut else None
+    now = pd.Timestamp.now(tz="UTC")
+    closed = df[df.index + bar <= now]  # candles that have finished
+    age = (now - (closed.index[-1] + bar)) if len(closed) else None
+    age_minutes = int(age.total_seconds() // 60) if age is not None else None
+    # fresh: the feed answered and the newest finished candle is recent; delayed: answered, but the
+    # data stops short (allow 2 candles, or the shut spell); saved: the feed didn't answer, old copy shown
+    if stale:
+        feed = "saved"
+    elif age is not None and age > 2 * bar and closed_until is None:
+        feed = "delayed"
+    else:
+        feed = "fresh"
     out = {"market": market or (s.market.symbol if s else ""), "label": label, "timeframe": tf,
            "candles": compute.candles_out(df, bars), "updated": pd.Timestamp.now(tz="UTC").isoformat(timespec="seconds"),
            "forming": bool(df.index[-1] + bar > pd.Timestamp.now(tz="UTC")),
            "spread": float(df["spread"].iloc[-1]) if "spread" in df.columns and pd.notna(df["spread"].iloc[-1]) else None,
-           "marks": [], "alerts": [], "stale": stale,
+           "marks": [], "alerts": [], "stale": stale, "feed": feed, "age_minutes": age_minutes,
            "closed_until": closed_until.isoformat() if closed_until is not None else None}
     first = df.index[-min(bars, len(df))]
     with ws.store(create=False) as store:

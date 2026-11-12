@@ -1395,3 +1395,13 @@ button.tile:hover { background: var(--glass-thin); }
 .legend-item .swatch { width: 1rem; height: 2px; display: inline-block; border-radius: 1px; }
 .readout-ind { color: var(--muted); }
 
+/* ================================================================== markets (0.3 session 4) */
+.health.delayed { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+.health.delayed .health-dot { background: transparent; border: 2px solid currentColor; width: .55rem; height: .55rem; }
+@media (max-width: 400px) {
+  .live-controls { display: flex; flex-wrap: nowrap; overflow-x: auto; gap: .5rem; scrollbar-width: none; padding-bottom: .2rem; }
+  .live-controls > * { flex: none; }
+  .candle-top { flex-wrap: wrap; }
+  .candle-top .candle-readout { flex-basis: 100%; order: 9; }
+}
+

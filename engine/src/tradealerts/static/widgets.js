@@ -194,7 +194,7 @@ function candleChart(initial, { height = 380, onPick = null, title = null, onMar
   const zoomIn = h("button", { type: "button", class: "icon", title: "Zoom in", "aria-label": "Zoom in" }, "+");
   const zoomOut = h("button", { type: "button", class: "icon", title: "Zoom out", "aria-label": "Zoom out" }, "−");
   const latest = h("button", { type: "button", class: "quiet", hidden: true }, "Back to latest");
-  const resetZoom = h("button", { type: "button", class: "quiet", hidden: true, title: "Show the latest 120 candles again" }, "Reset zoom");
+  const resetZoom = h("button", { type: "button", class: "quiet", hidden: true, title: "Show the latest 120 candles again" }, "Reset");
   const full = expandable(wrap, (e) => keyNav(e));
   svgEl.setAttribute("tabindex", "0");
   svgEl.addEventListener("keydown", (e) => keyNav(e));
@@ -225,7 +225,7 @@ function candleChart(initial, { height = 380, onPick = null, title = null, onMar
     visible = Math.max(20, Math.min(visible, all.length));
     offset = Math.max(0, Math.min(offset, all.length - visible));
     latest.hidden = offset === 0;
-    resetZoom.hidden = visible === Math.min(DEFAULT_VISIBLE, all.length);
+    resetZoom.hidden = visible === Math.min(DEFAULT_VISIBLE, all.length) && offset === 0;
     const end = all.length - offset;
     const view = all.slice(end - visible, end);
     const inds = shownInd();
@@ -472,6 +472,37 @@ function candleChart(initial, { height = 380, onPick = null, title = null, onMar
     e.preventDefault();
     draw();
   }
+  /** Zoom by ``factor`` keeping the candle at view index ``i`` under the pointer. */
+  function zoomAt(factor, i) {
+    const all = data.candles || [];
+    const want = Math.max(20, Math.min(all.length, Math.round(visible * factor)));
+    if (want === visible) return;
+    const rightOf = visible - 1 - i;  // candles to the right of the pointer, kept in proportion
+    offset = Math.max(0, Math.round(offset - (want - visible) * (rightOf / Math.max(1, visible - 1))));
+    visible = want;
+    draw();
+  }
+  svgEl.addEventListener("wheel", (e) => {
+    if (!geom) return;
+    e.preventDefault();  // the page doesn't scroll while zooming the chart
+    const { px } = toLocal(e);
+    const i = Math.max(0, Math.min(geom.view.length - 1, Math.round((px - 8) / geom.slot - 0.5)));
+    const factor = e.ctrlKey ? Math.exp(e.deltaY * 0.01) : e.deltaY > 0 ? 1.25 : 0.8;  // ctrl: trackpad pinch
+    zoomAt(factor, i);
+  }, { passive: false });
+  // touch pinch: two pointers
+  const touches = new Map();
+  let pinch = null;
+  svgEl.addEventListener("pointerdown", (e) => { if (e.pointerType === "touch") { touches.set(e.pointerId, e.clientX); if (touches.size === 2) { pinch = { span: Math.abs([...touches.values()].reduce((a, b) => a - b)), visible }; drag = null; } } });
+  svgEl.addEventListener("pointermove", (e) => {
+    if (!pinch || !touches.has(e.pointerId)) return;
+    touches.set(e.pointerId, e.clientX);
+    const span = Math.abs([...touches.values()].reduce((a, b) => a - b));
+    if (span > 10) { const want = Math.round(pinch.visible * pinch.span / span); if (want !== visible) zoomAt(want / visible, Math.floor(visible / 2)); }
+  });
+  const endTouch = (e) => { touches.delete(e.pointerId); if (touches.size < 2) pinch = null; };
+  svgEl.addEventListener("pointerup", endTouch);
+  svgEl.addEventListener("pointercancel", endTouch);
   zoomIn.addEventListener("click", () => { visible = Math.round(visible / 1.4); draw(); });
   zoomOut.addEventListener("click", () => { visible = Math.round(visible * 1.4); draw(); });
   latest.addEventListener("click", () => { offset = 0; draw(); });
