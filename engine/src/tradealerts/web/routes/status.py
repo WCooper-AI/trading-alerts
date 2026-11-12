@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, Request
 
-from ... import markethours
 from ...config import ConfigError
 from ...notify import build_notifiers
 from ...strategy import StrategyError, load_strategy, strategy_files
 from ...workspace import Workspace
 from .. import activity
+from ..runs_view import STATES, run_health
 from ..common import clean, ctx_of, err, workspace
 
 router = APIRouter()
@@ -21,37 +21,35 @@ def status(request: Request, ws: Workspace = Depends(workspace)):
     c = ws.config()
     files = strategy_files(c.strategies_dir)
     live = 0
-    symbols = {}
     for sid, p in files.items():
         try:
             s = load_strategy(p)
         except StrategyError:
             continue
-        symbols[sid] = s.market.symbol
         live += int(not s.template and s.enabled)
-    running, paused, reopens = 0, 0, None
+    runner = ctx.runner_status(ws)
+    counts = {k: 0 for k in STATES}
+    reopens = None
     with ws.store(create=False) as store:
-        active = [sid for sid in store.active_runs() if sid in files] if store else []
+        active = [r for sid, r in store.active_runs().items() if sid in files] if store else []
+    for run in active:  # the same state each test shows on the dashboard and strategies list
+        health = run_health(run, files, runner)
+        counts[health["state"]] += 1
+        if health.get("reopens") and (reopens is None or health["reopens"] < reopens):
+            reopens = health["reopens"]
     running = len(active)
-    for sid in active:  # which are waiting for their market to open after the weekend
-        if sid not in symbols:
-            continue
-        back = markethours.weekend_reopen(symbols[sid])
-        if back is not None:
-            paused += 1
-            reopens = min(reopens, back) if reopens is not None else back
     try:
         channels = [n.name for n in build_notifiers(c.notifiers)]
         channel_error = None
     except (ConfigError, ValueError, TypeError) as exc:
         channels, channel_error = [], str(exc)
     return clean({
-        "runner": ctx.runner_status(ws),
+        "runner": runner,
         "poll_minutes": c.poll_minutes,
         "live_strategies": live,
         "running_tests": running,
-        "paused_tests": paused,
-        "reopens": reopens.isoformat() if reopens is not None else None,
+        "states": counts,                 # watching / waiting / attention / stopped (stopped is always 0 here)
+        "reopens": reopens,
         "strategies": len(files),
         "channels": channels,
         "channel_error": channel_error,

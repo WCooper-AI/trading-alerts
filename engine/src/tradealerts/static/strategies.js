@@ -114,9 +114,8 @@ async function viewStrategies() {
       h("td", {}, h("a", { class: "name", href: "#/s/" + it.id }, d.name || it.file),
         it.error ? h("p", { class: "small loss" }, it.error) : renderParts(describeCondition(d.entry || {}), "sentence small-sentence")),
       h("td", { class: "nowrap" }, (d.market || {}).label || (d.market || {}).symbol || "–", h("div", { class: "small muted" }, (d.market || {}).timeframe || "")),
-      h("td", {}, (st === "testing" || st === "live") && problemOf(it.id)
-        ? h("span", { class: "pill problem", title: problemOf(it.id) }, "Problem")
-        : pill(st, st === "broken" ? "Needs fixing" : null)),
+      h("td", { class: "status-cell" }, pill(st, st === "broken" ? "Needs fixing" : null),
+        run && run.health ? stateBadge(run.health) : null),
       h("td", { class: "num" }, run ? money(run.balance, sym) : "–",
         h("div", { class: "small muted" }, position)),
       h("td", { class: "num spark-cell" }, sparkline(it.spark, run ? (run.pnl >= 0 ? "gain" : "loss") : "")),

@@ -45,12 +45,15 @@ async function refreshStatus() {
   if (!r.enabled) text = "Live checks off";
   else if (r.last_error) { text = "Check failed"; cls += " err"; }
   else if (problems) { text = `${problems} need${problems === 1 ? "s" : ""} attention`; cls += " err"; }
-  else if (!s.live_strategies && !s.running_tests) text = "Nothing running";
+  else if (!s.running_tests) text = "Nothing running";
   else {
-    const total = Math.max(s.running_tests || 0, s.live_strategies);
-    const paused = Math.min(s.paused_tests || 0, total);
-    if (paused && paused === total) { cls += " paused"; text = "Paused for the weekend"; }
-    else { cls += " on"; text = `${total - paused} running` + (paused ? ` · ${paused} paused` : ""); }
+    const st = s.states || {};
+    const parts = [];
+    if (st.watching) parts.push(`${st.watching} watching`);
+    if (st.waiting) parts.push(`${st.waiting} waiting`);
+    if (st.attention) parts.push(`${st.attention} need${st.attention === 1 ? "s" : ""} attention`);
+    cls += st.attention ? " err" : st.watching ? " on" : " paused";
+    text = parts.join(", ");
   }
   if (s.channel_error) { text = "Alert settings problem"; cls = "dot err"; }
   const open = !document.getElementById("runner-panel").hidden;
@@ -90,8 +93,8 @@ async function drawRunnerPanel() {
     lines.push(h("dl", { class: "facts" },
       h("dt", {}, "Last check"), h("dd", {}, r.last_run ? `${hhmm(r.last_run)} (${ago(r.last_run)})` : "Not yet"),
       h("dt", {}, "Next check"), h("dd", {}, r.next_run ? hhmm(r.next_run) : "–"),
-      s.paused_tests ? [h("dt", {}, "Markets reopen"), h("dd", {}, reopenText(s.reopens))] : null));
-    if (s.paused_tests) lines.push(h("p", { class: "small muted" }, "Markets are shut for the weekend, so there are no new candles to check. Paused tests carry on by themselves when they reopen."));
+      s.reopens ? [h("dt", {}, "Markets reopen"), h("dd", {}, reopenText(s.reopens))] : null));
+    if (s.reopens) lines.push(h("p", { class: "small muted" }, "A market is shut, so there are no new candles to check. Waiting tests carry on by themselves when it reopens."));
   }
   if (r.last_error) lines.push(h("p", { class: "error-box small" }, "The last check failed: " + r.last_error));
   if (s.channel_error) lines.push(h("p", { class: "error-box small" }, h("a", { href: "#/settings" }, "Alert settings problem: " + s.channel_error)));
@@ -104,8 +107,8 @@ async function drawRunnerPanel() {
       runs.length ? h("ul", { class: "runner-list" }, runs.map((x) => h("li", {},
         h("a", { href: "#/run/" + x.id, onclick: () => toggleRunnerPanel(false) },
           h("span", {}, h("span", { class: "rl-name" }, x.name), h("span", { class: "small muted" }, x.market)),
-          healthBadge(x.health)),
-        (x.health || {}).state === "problem" ? h("p", { class: "small loss rl-problem" }, x.health.text) : null)))
+          stateBadge(x.health)),
+        (x.health || {}).state === "attention" ? h("p", { class: "small loss rl-problem" }, x.health.text) : null)))
         : h("p", { class: "small muted" }, "Nothing running. Start a forward test or turn on alerts for a strategy."),
       h("div", { class: "runner-actions" }, check, h("a", { class: "button quiet", href: "#/settings", onclick: () => toggleRunnerPanel(false) }, "Change how often")))]);
 }

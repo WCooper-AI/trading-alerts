@@ -252,3 +252,51 @@ def test_failed_alerts_are_recorded(ws):
     failed = store.events_page(["alert_failed"])
     assert failed and "ntfy: timed out" in failed[0]["message"]
     store.close()
+
+
+# --------------------------------------------------------------------------- one status everywhere
+
+
+def test_market_closed_until_covers_weekend_and_daily_break():
+    import pandas as pd
+
+    from tradealerts import markethours
+
+    sat = pd.Timestamp("2026-11-07 12:00", tz="UTC")
+    back, why = markethours.closed_until("us500", sat)
+    assert why == "weekend" and back == pd.Timestamp("2026-11-08 23:00", tz="UTC")
+    # Tuesday 17:30 New York (22:30 UTC in winter): the daily break, back at 18:00 New York
+    back, why = markethours.closed_until("us500", pd.Timestamp("2026-11-10 22:30", tz="UTC"))
+    assert why == "daily break" and back == pd.Timestamp("2026-11-10 23:00", tz="UTC")
+    assert markethours.closed_until("us500", pd.Timestamp("2026-11-10 23:00", tz="UTC")) is None
+    assert markethours.closed_until("btc", pd.Timestamp("2026-11-10 22:30", tz="UTC")) is None
+
+
+def test_status_dashboard_and_strategies_agree_on_each_tests_state(client, ws, monkeypatch):
+    import pandas as pd
+
+    from tradealerts import markethours
+
+    sid, run = start(client)
+    states = lambda: (  # noqa: E731
+        client.get("/api/status").json()["states"],
+        client.get("/api/dashboard").json()["running"][0]["health"],
+        client.get(f"/api/strategies").json()["strategies"][0]["live"]["run"]["health"],
+        client.get(f"/api/runs/{run['id']}").json()["health"],
+    )
+    # no live checker in the test app: every view says the test needs attention
+    counts, dash, listed, detail = states()
+    assert counts["attention"] == 1 and dash["state"] == listed["state"] == detail["state"] == "attention"
+    assert "Live checks are off" in detail["text"]
+    # a working checker on a Saturday: waiting, and all three know when the market reopens
+    client.app.state.ctx.runner_status = lambda ws: {"enabled": True, "last_run": None, "next_run": None, "problems": {}}
+    monkeypatch.setattr(markethours, "closed_until", lambda symbol, now=None: (pd.Timestamp("2026-11-08 23:00", tz="UTC"), "weekend"))
+    counts, dash, listed, detail = states()
+    assert counts == {"watching": 0, "waiting": 1, "attention": 0, "stopped": 0}
+    assert dash["state"] == listed["state"] == detail["state"] == "waiting" and dash["reopens"] == listed["reopens"]
+    assert client.get("/api/status").json()["reopens"] == dash["reopens"]
+    monkeypatch.setattr(markethours, "closed_until", lambda symbol, now=None: None)
+    counts, dash, listed, detail = states()
+    assert counts["watching"] == 1 and {dash["state"], listed["state"], detail["state"]} == {"watching"}
+    client.post(f"/api/strategies/{sid}/forward-test/stop", headers=H)
+    assert client.get(f"/api/runs/{run['id']}").json()["health"]["state"] == "stopped"

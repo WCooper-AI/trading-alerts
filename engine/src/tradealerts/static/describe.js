@@ -211,19 +211,26 @@ function reopenText(t) {
   return d.toLocaleDateString("en-GB", { weekday: "short" }) + " " + hhmm(d);
 }
 
-/** Running / paused for the weekend / problem, for a running forward test. */
-function healthBadge(hl) {
-  hl = hl || { state: "running" };
-  const label = { running: "Running", closed: "Paused", problem: "Problem" }[hl.state] || "Running";
-  const tip = hl.state === "closed" ? `Market closed for the weekend. Checks start again ${reopenText(hl.reopens)}.`
-    : hl.state === "problem" ? hl.text : "Being checked every time a candle closes";
-  return h("span", { class: "health " + hl.state, title: tip }, h("span", { class: "health-dot", "aria-hidden": "true" }), label);
+/** The one state of a forward test, the same wherever it's shown (server decides it):
+    watching / waiting (market shut, reopens at…) / attention (with the reason) / stopped. */
+function stateLabel(hl) {
+  if (hl.state === "waiting") return hl.reopens ? `Waiting: market opens ${reopenText(hl.reopens)}` : "Waiting";
+  return { watching: "Watching", attention: "Needs attention", stopped: "Stopped" }[hl.state] || "Watching";
 }
-function healthLine(hl) {
+function stateDetail(hl) {
+  if (hl.state === "waiting") return `${hl.text || "Market closed"}. Checks start again ${reopenText(hl.reopens)}.`;
+  if (hl.state === "attention") return hl.text || "Something is stopping this test being checked.";
+  if (hl.state === "stopped") return "This forward test has finished.";
+  return hl.next_check ? `Checked every time a candle closes. Next check at ${hhmm(hl.next_check)}.` : "Checked every time a candle closes.";
+}
+function stateBadge(hl) {
+  hl = hl || { state: "watching" };
+  return h("span", { class: "health " + hl.state, title: stateDetail(hl) }, h("span", { class: "health-dot", "aria-hidden": "true" }), stateLabel(hl));
+}
+function stateLine(hl) {
   if (!hl) return null;
-  if (hl.state === "closed") return h("p", { class: "health-line closed small" }, `Market closed for the weekend. Checks start again ${reopenText(hl.reopens)}.`);
-  if (hl.state === "problem") return h("p", { class: "health-line problem small" }, hl.text);
-  return h("p", { class: "health-line small muted" }, hl.next_check ? `Next check at ${hhmm(hl.next_check)}` : "Checked every time a candle closes");
+  const cls = hl.state === "attention" ? "health-line attention small" : hl.state === "waiting" ? "health-line waiting small" : "health-line small muted";
+  return h("p", { class: cls }, stateDetail(hl));
 }
 
 /** What a strategy is doing: alerts on (always forward-testing), forward testing silently, or a draft. */

@@ -100,7 +100,8 @@ def candles(request: Request, market: str = "", strategy: str = "", timeframe: s
     if df.empty:
         err(422, "No prices for that market yet")
     stale = stale or old_age is not None
-    closed_until = markethours.weekend_reopen(symbol)
+    shut = markethours.closed_until(symbol)
+    closed_until = shut[0] if shut else None
     out = {"market": market or (s.market.symbol if s else ""), "label": label, "timeframe": tf,
            "candles": compute.candles_out(df, bars), "updated": pd.Timestamp.now(tz="UTC").isoformat(timespec="seconds"),
            "forming": bool(df.index[-1] + bar > pd.Timestamp.now(tz="UTC")),

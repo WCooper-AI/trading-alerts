@@ -73,8 +73,7 @@ def run_detail(run_id: int, request: Request, ws: Workspace = Depends(workspace)
         summary["strategy_exists"] = run["strategy_id"] in files
         summary["trade_list"] = list(reversed(store.trades(run_id=run_id)))
         summary["events"] = store.recent_events(100, run_id=run_id)
-        if summary["active"]:
-            summary["health"] = run_health(summary, files, ctx_of(request).runner_status(ws))
+        summary["health"] = run_health(summary, files, ctx_of(request).runner_status(ws))
     return clean(summary)
 
 

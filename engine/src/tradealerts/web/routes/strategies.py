@@ -19,7 +19,7 @@ from ...workspace import Workspace
 from ..common import (
     INDICATOR_LABELS, INDICATOR_SHORT, MARKET_PRESETS, TIMEFRAMES, TIMEZONES, clean, ctx_of, err, workspace,
 )
-from ..runs_view import run_series, run_summary
+from ..runs_view import run_health, run_series, run_summary
 from ... import versions
 from ..strategy_io import (alerts_on, check_running_limit, record_version, save, save_new, strategy_path, validate,
                           write)
@@ -106,11 +106,13 @@ def build_recipe(body: dict = Body(...), ws: Workspace = Depends(workspace)):
 
 
 @router.get("/api/strategies")
-def list_strategies(ws: Workspace = Depends(workspace)):
+def list_strategies(request: Request, ws: Workspace = Depends(workspace)):
     c = ws.config()
+    runner = ctx_of(request).runner_status(ws)
     with ws.store(create=False) as store:
         items = []
-        for sid, path in strategy_files(c.strategies_dir).items():
+        files = strategy_files(c.strategies_dir)
+        for sid, path in files.items():
             item: dict[str, Any] = {"id": sid, "file": path.name}
             try:
                 item["data"] = read_raw(path)
@@ -122,7 +124,12 @@ def list_strategies(ws: Workspace = Depends(workspace)):
             if store:
                 versions.sync(store, sid, path, ws.limits.max_versions)
             run = store.active_run(sid) if store else None
-            item["live"] = {"run": run_summary(store, run, with_series=False)} if run else {}
+            if run:
+                summary = run_summary(store, run, with_series=False)
+                summary["health"] = run_health(summary, files, runner)
+                item["live"] = {"run": summary}
+            else:
+                item["live"] = {}
             if run:
                 eq = store.equity(run["id"])
                 item["spark"] = run_series(run, eq, eq[-1][1] if eq else run["start_balance"], 40)

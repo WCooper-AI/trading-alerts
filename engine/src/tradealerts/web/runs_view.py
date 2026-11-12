@@ -72,25 +72,39 @@ def run_summary(store: StateStore, run: dict, with_series: bool = True, max_poin
     return out
 
 
+STATES = ("watching", "waiting", "attention", "stopped")
+
+
 def run_health(r: dict, files: dict, st: dict) -> dict:
-    """Whether a running forward test is being checked, paused for the weekend, or stuck."""
+    """The one state of a forward test, used everywhere it's shown:
+
+    watching   checked each time a candle closes
+    waiting    its market is shut (weekend or the daily break); ``reopens`` says until when
+    attention  something stops it being checked; ``text`` says what
+    stopped    the test has finished
+    """
     from .. import markethours
 
+    base = {"last_check": st.get("last_run"), "next_check": st.get("next_run")}
+    if r.get("stopped_at"):
+        return {**base, "state": "stopped", "text": "Stopped"}
     sid = r["strategy_id"]
-    if not r.get("strategy_exists"):
-        return {"state": "problem", "text": "Its strategy file is missing, so it can't be checked"}
+    if not r.get("strategy_exists", sid in files):
+        return {**base, "state": "attention", "text": "Its strategy file is missing, so it can't be checked"}
     problem = (st.get("problems") or {}).get(sid)
     if problem:
-        return {"state": "problem", "text": problem}
+        return {**base, "state": "attention", "text": problem}
     if not st.get("enabled"):
-        return {"state": "problem", "text": st.get("off_reason") or "Live checks are off, so nothing is being checked"}
+        return {**base, "state": "attention", "text": st.get("off_reason") or "Live checks are off, so nothing is being checked"}
     if st.get("last_error"):
-        return {"state": "problem", "text": "The last check failed: " + st["last_error"]}
+        return {**base, "state": "attention", "text": "The last check failed: " + st["last_error"]}
     try:
         symbol = load_strategy(files[sid]).market.symbol
     except Exception as exc:
-        return {"state": "problem", "text": f"The strategy can't be read: {exc}"}
-    reopen = markethours.weekend_reopen(symbol)
-    if reopen is not None:
-        return {"state": "closed", "text": "Market closed for the weekend", "reopens": reopen.isoformat()}
-    return {"state": "running", "text": "Running", "next_check": st.get("next_run")}
+        return {**base, "state": "attention", "text": f"The strategy can't be read: {exc}"}
+    shut = markethours.closed_until(symbol)
+    if shut is not None:
+        reopens, why = shut
+        return {**base, "state": "waiting", "reopens": reopens.isoformat(), "why": why,
+                "text": "Market closed for the weekend" if why == "weekend" else "Market's daily break"}
+    return {**base, "state": "watching", "text": "Watching"}

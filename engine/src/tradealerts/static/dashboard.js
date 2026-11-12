@@ -29,12 +29,12 @@ function runCard(run, onChange, { chartHeight = 96 } = {}) {
     toast(r.alerts_turned_off ? "Forward test stopped and alerts turned off" : "Forward test stopped");
     refreshStatus(); onChange();
   } }, "Stop");
-  const state = (run.health || {}).state || "running";
+  const state = (run.health || {}).state || "watching";
   return h("article", { class: "run-card is-" + state },
     h("div", { class: "run-head" },
       h("div", {}, h("h3", {}, h("a", { href: "#/run/" + run.id }, run.name)),
         h("p", { class: "small muted" }, `${run.market}, checked ${EVERY_TEXT[run.timeframe] || run.timeframe}`)),
-      h("div", { class: "run-badges" }, healthBadge(run.health),
+      h("div", { class: "run-badges" }, stateBadge(run.health),
         run.alerts ? h("span", { class: "tag", title: "Alerts are on: you get a message when the rules are met" }, "Alerts on") : null)),
     h("div", { class: "run-numbers" },
       h("div", {}, h("div", { class: "big" }, money(run.balance, sym)), h("div", { class: "lbl" }, `from ${money(run.start_balance, sym)}`)),
@@ -43,7 +43,7 @@ function runCard(run, onChange, { chartHeight = 96 } = {}) {
       h("div", {}, h("div", { class: "big" }, String(run.trades)), h("div", { class: "lbl" }, run.trades ? `${run.wins} won` : "trades"))),
     lineChart(run.series, { title: "", fmt: (v) => money(v, sym), baseline: run.start_balance, tone, height: chartHeight, timeX: true }),
     h("p", { class: "small" }, positionText(run, run.direction)),
-    healthLine(run.health),
+    stateLine(run.health),
     h("div", { class: "run-foot" },
       h("span", { class: "small muted" }, `Started ${when(run.started_at)} (${ago(run.started_at)})`),
       h("span", { class: "inline" }, h("a", { class: "button small", href: "#/run/" + run.id }, "Details"), stop)));
@@ -53,11 +53,11 @@ function comingUp(dash, newsRes, startable, pick) {
   const st = (app.status && app.status.runner) || {};
   const news = ((newsRes && newsRes.events) || [])
     .filter((e) => (e.impact === "high" || e.impact === "medium") && new Date(e.time) > Date.now()).slice(0, 4);
-  const closed = dash.running.filter((r) => (r.health || {}).state === "closed");
+  const closed = dash.running.filter((r) => (r.health || {}).state === "waiting");
   const rows = [];
   if (closed.length === dash.running.length && closed.length) {
     rows.push(h("li", {}, h("span", { class: "cu-icon" }, new Date(closed[0].health.reopens).toLocaleDateString("en-GB", { weekday: "short" })), h("div", {},
-      h("strong", {}, "Markets closed for the weekend"),
+      h("strong", {}, closed[0].health.why === "weekend" ? "Markets closed for the weekend" : "Market on its daily break"),
       h("div", { class: "small muted" }, `Checks start again ${reopenText(closed[0].health.reopens)}`))));
   } else if (st.next_run) {
     rows.push(h("li", {}, h("span", { class: "cu-icon" }, "↻"), h("div", {},
@@ -113,11 +113,14 @@ async function viewDashboard() {
   if (n) {
     const syms = new Set(dash.running.map((r) => r.currency_symbol));
     const total = dash.running.reduce((a, r) => a + r.pnl, 0);
-    const paused = dash.running.filter((r) => (r.health || {}).state === "closed").length;
-    const problems = dash.running.filter((r) => (r.health || {}).state === "problem").length;
-    lede = (paused === n ? `${n} forward ${n === 1 ? "test" : "tests"}, paused while the markets are closed for the weekend.`
-      : `${n - paused} forward ${n - paused === 1 ? "test" : "tests"} running` + (paused ? `, ${paused} paused for the weekend.` : "."))
-      + (problems ? ` ${problems} ${problems === 1 ? "needs" : "need"} attention.` : "")
+    const waiting = dash.running.filter((r) => (r.health || {}).state === "waiting").length;
+    const attention = dash.running.filter((r) => (r.health || {}).state === "attention").length;
+    const watching = n - waiting - attention;
+    const parts = [];
+    if (watching) parts.push(`${watching} watching`);
+    if (waiting) parts.push(`${waiting} waiting for ${waiting === 1 ? "its market" : "markets"} to open`);
+    if (attention) parts.push(`${attention} ${attention === 1 ? "needs" : "need"} attention`);
+    lede = `${n} forward ${n === 1 ? "test" : "tests"}: ${parts.join(", ")}.`
       + (syms.size === 1 ? ` Together they're ${signedMoney(total, [...syms][0])} since they started.` : "");
   }
   append(page, [h("div", { class: "page-head" },
@@ -319,7 +322,7 @@ async function viewRun(id) {
     h("div", { class: "page-head" },
       h("div", {}, h("h1", {}, r.name),
         h("p", { class: "muted" }, `${r.market}, checked ${EVERY_TEXT[r.timeframe] || r.timeframe}. ${period}`),
-        h("div", { class: "inline run-pills" }, r.active ? [healthBadge(r.health), alerts ? h("span", { class: "tag" }, "Alerts on") : null] : pill("draft", "Finished"))),
+        h("div", { class: "inline run-pills" }, [stateBadge(r.health || { state: r.active ? "watching" : "stopped" }), r.active && alerts ? h("span", { class: "tag" }, "Alerts on") : null])),
       actions),
     h("div", { class: "editor" },
       h("div", { class: "panel" }, h("section", { class: "section" },
