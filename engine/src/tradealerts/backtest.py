@@ -300,9 +300,6 @@ def risk_ratios(equity: pd.Series, timeframe: str, symbol: str = "") -> dict:
     r = equity.pct_change().dropna().to_numpy(dtype=float)
     r = r[np.isfinite(r)]
     if len(r) < 2:
-        return None
-    r = r[np.isfinite(r)]
-    if len(r) < 2:
         return out
     scale = float(np.sqrt(bars_per_year(equity.index, timeframe, symbol=symbol)))
     mean = float(r.mean())
