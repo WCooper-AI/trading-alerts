@@ -82,6 +82,111 @@ function comingUp(dash, newsRes, startable, pick) {
       h("a", { class: "button small", href: "#/news" }, "All news")));
 }
 
+// --------------------------------------------------------------------- 24h market-session timeline
+
+const SESSIONS = [
+  { key: "asia", name: "Tokyo", tz: "Asia/Tokyo", open: 9, close: 18 },
+  { key: "london", name: "London", tz: "Europe/London", open: 8, close: 17 },
+  { key: "ny", name: "New York", tz: "America/New_York", open: 8, close: 17 },
+];
+const TL_BEFORE = 6 * 3600000, TL_SPAN = 24 * 3600000;
+
+/** Epoch ms of hour `hr` local time in `tz` on the calendar day containing `dayMs` (UTC date). */
+function zoneHour(dayMs, tz, hr) {
+  const guess = Date.UTC(new Date(dayMs).getUTCFullYear(), new Date(dayMs).getUTCMonth(), new Date(dayMs).getUTCDate(), hr);
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: tz, hourCycle: "h23",
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
+    .formatToParts(guess).map((x) => [x.type, x.value]));
+  const asUtc = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute);
+  return guess - (asUtc - guess);
+}
+
+/** Group news within 15 minutes of each other so coincident releases share one pin. */
+function clusterNews(events) {
+  const groups = [];
+  for (const e of events) {
+    const t = new Date(e.time).getTime(), last = groups[groups.length - 1];
+    if (last && t - last.t <= 15 * 60000) last.items.push(e);
+    else groups.push({ t, items: [e] });
+  }
+  return groups;
+}
+
+function countdown(ms) {
+  const s = Math.max(0, Math.round(ms / 1000)), hh = Math.floor(s / 3600), mm = Math.floor((s % 3600) / 60), ss = s % 60;
+  return (hh ? hh + ":" + String(mm).padStart(2, "0") : mm) + ":" + String(ss).padStart(2, "0");
+}
+
+function sessionTimeline(newsRes) {
+  const box = h("section", { class: "panel timeline", "aria-label": "Market sessions, next 24 hours" });
+  const openText = h("strong", {});
+  const newsSlot = h("span", {});
+  const cdText = h("span", { class: "countdown" });
+  const checkBtn = h("button", { type: "button", class: "linklike", onclick: () => toggleRunnerPanel(true) }, "Next check ", cdText);
+  const noCheck = h("span", {}, "No checks scheduled");
+  const meta = h("div", { class: "timeline-meta" }, h("span", {}, openText), newsSlot, checkBtn, noCheck);
+  const layer = h("div", {});               // bands, pins, check marker: rebuilt each minute
+  const nowLine = h("div", { class: "timeline-now", title: "Now" });
+  const track = h("div", { class: "timeline-track" }, layer, nowLine);
+  const ticks = h("div", { class: "timeline-ticks", "aria-hidden": "true" });
+  box.append(meta, track, ticks);
+  const allNews = ((newsRes && newsRes.events) || []).filter((e) => e.impact === "high" || e.impact === "medium");
+  let start = 0;
+  const pct = (t) => ((t - start) / TL_SPAN) * 100;
+  const nextRun = () => { const st = app.status && app.status.runner; return st && st.next_run ? new Date(st.next_run).getTime() : null; };
+
+  // Slow layer: positions move under 1px a minute, so redraw once a minute (not while the user is pointing at or tabbed into it).
+  const drawLayer = (force) => {
+    if (!force && box.matches(":hover, :focus-within")) return;
+    const now = Date.now(); start = now - TL_BEFORE; const end = start + TL_SPAN;
+    const kids = [], open = [];
+    for (const s of SESSIONS) {
+      for (let d = -1; d <= 1; d++) {
+        const day = now + d * 86400000;
+        const a = zoneHour(day, s.tz, s.open), b = zoneHour(day, s.tz, s.close);
+        if (b <= start || a >= end) continue;
+        const wd = new Date(zoneHour(day, s.tz, 12)).toLocaleDateString("en-GB", { timeZone: s.tz, weekday: "short" });
+        if (wd === "Sat" || wd === "Sun") continue;
+        const live = now >= a && now < b;
+        if (live) open.push(s.name);
+        const l = Math.max(0, pct(a)), r = Math.min(100, pct(b));
+        kids.push(h("div", { class: `session-band ${s.key}${live ? " open" : ""}`, style: { left: l + "%", width: (r - l) + "%" },
+          title: `${s.name} ${hhmm(a)}–${hhmm(b)}` }, s.name));
+      }
+    }
+    const shown = allNews.filter((e) => { const t = new Date(e.time).getTime(); return t >= start && t <= end; })
+      .sort((x, y) => new Date(x.time) - new Date(y.time));
+    for (const g of clusterNews(shown)) {
+      const high = g.items.some((e) => e.impact === "high"), many = g.items.length > 1;
+      const label = many ? `${g.items.length} events at ${hhmm(g.t)}: ` + g.items.map((e) => `${e.currency} ${e.title}`).join(", ")
+        : `${hhmm(g.t)} ${g.items[0].currency} ${g.items[0].title}`;
+      kids.push(h("a", { class: `timeline-pin ${high ? "high" : "medium"}${many ? " cluster" : ""}`, href: "#/news",
+        style: { left: pct(g.t) + "%" }, title: label, "aria-label": label }, many ? h("span", { class: "pin-count", "aria-hidden": "true" }, String(g.items.length)) : null));
+    }
+    const next = nextRun();
+    if (next && next > now && next < end) kids.push(h("div", { class: "timeline-check", style: { left: pct(next) + "%" }, title: `Next check ${hhmm(next)}` }));
+    layer.replaceChildren(...kids);
+    const tk = [];
+    for (let t = Math.ceil(start / 10800000) * 10800000; t <= end; t += 10800000) tk.push(h("span", { style: { left: pct(t) + "%" } }, hhmm(t)));
+    ticks.replaceChildren(...tk);
+    openText.textContent = open.length ? open.join(" + ") + " open" : "Markets quiet";
+    const nn = shown.find((e) => e.impact === "high" && new Date(e.time).getTime() > now);
+    newsSlot.replaceChildren(nn ? h("a", { href: "#/news" }, `${nn.currency} ${nn.title} `, h("span", { class: "num" }, untilText(nn.time)))
+      : h("span", {}, "No big news in the next 18 hours"));
+  };
+  // Fast tick: just the now line and the countdown text.
+  const tick = () => {
+    const now = Date.now(), next = nextRun();
+    nowLine.style.left = pct(now) + "%";
+    const has = !!(next && next > now);
+    checkBtn.hidden = !has; noCheck.hidden = has;
+    if (has) cdText.textContent = countdown(next - now);
+  };
+  drawLayer(true); tick();
+  app.timers.push(setInterval(tick, 1000), setInterval(() => drawLayer(false), 60000));
+  return box;
+}
+
 async function viewDashboard() {
   setNav("dashboard");
   const [dash, list, settings, newsRes] = await Promise.all([GET("/dashboard"), GET("/strategies"),
@@ -161,7 +266,8 @@ async function viewDashboard() {
     append(page, [card]);
   }
 
-  // ----- summary strip
+  // ----- 24h market-session timeline, then a one-line summary
+  append(page, [sessionTimeline(newsRes)]);
   if (n) {
     const syms = new Set(dash.running.map((r) => r.currency_symbol));
     const one = syms.size === 1 ? [...syms][0] : null;
@@ -176,26 +282,11 @@ async function viewDashboard() {
     const st = app.status && app.status.runner;
     const nextCheck = st && st.next_run ? hhmm(st.next_run) : null;
     const newsText = nextNews ? `${untilText(nextNews.time).replace(/^in /, "")} until ${nextNews.currency} ${nextNews.title}` : "no big news this week";
-    if (n <= 2) {
-      // a card or two: one line is enough, the cards carry the detail
-      const bits = [];
-      if (one) bits.push(h("span", {}, "Paper balance ", h("strong", { class: "num" }, money(total, one))));
-      if (one) bits.push(h("span", {}, "Last 24 hours ", h("strong", { class: "num " + (today >= 0 ? "gain" : "loss") }, signedMoney(today, one))));
-      bits.push(h("a", { href: "#/news" }, newsText[0].toUpperCase() + newsText.slice(1)));
-      if (nextCheck) bits.push(h("button", { type: "button", class: "linklike", onclick: () => toggleRunnerPanel(true) }, `Next check ${nextCheck}`));
-      append(page, [h("p", { class: "summary-line" }, bits.flatMap((b, i) => (i ? [h("span", { class: "sep", "aria-hidden": "true" }, "·"), b] : [b])))]);
-    } else {
-      const tile = (big, label, cls = "", href = null, onclick = null) => {
-        const inner = [h("div", { class: "big " + cls }, big), h("div", { class: "lbl" }, label)];
-        if (onclick) return h("button", { type: "button", class: "tile", onclick }, inner);
-        return href ? h("a", { class: "tile", href }, inner) : h("div", { class: "tile" }, inner);
-      };
-      append(page, [h("div", { class: "panel summary-strip" },
-        one ? tile(money(total, one), `paper balance across ${n} tests`, "", "#/strategies") : tile(String(n), "forward tests running", "", "#/strategies"),
-        one ? tile(signedMoney(today, one), "in the last 24 hours", today >= 0 ? "gain" : "loss", "#/activity?filter=trades") : null,
-        tile(nextNews ? untilText(nextNews.time).replace(/^in /, "") : "–", nextNews ? `until ${nextNews.currency} ${nextNews.title}` : "no big news this week", "", "#/news"),
-        tile(nextCheck || "–", "next check", "", null, nextCheck ? () => toggleRunnerPanel(true) : null))]);
-    }
+    const bits = [];
+    if (one) bits.push(h("span", {}, "Paper balance ", h("strong", { class: "num" }, money(total, one))));
+    if (one) bits.push(h("span", {}, "Last 24 hours ", h("strong", { class: "num " + (today >= 0 ? "gain" : "loss") }, signedMoney(today, one))));
+    if (!one) bits.push(h("a", { href: "#/strategies" }, h("strong", { class: "num" }, String(n)), " forward tests running"));
+    append(page, [h("p", { class: "summary-line" }, bits.flatMap((b, i) => (i ? [h("span", { class: "sep", "aria-hidden": "true" }, "·"), b] : [b])))]);
   }
 
   if (n) {

@@ -241,7 +241,7 @@ def raw_from_settings(raw: dict, settings: dict, ws: Workspace | None = None) ->
 # --------------------------------------------------------------------------- appearance
 
 ACCENT_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
-DEFAULT_APPEARANCE = {"theme": "auto", "accent": "#0a84ff", "glass": True, "density": "comfortable"}
+DEFAULT_APPEARANCE = {"theme": "auto", "accent": "#d9912b", "density": "comfortable"}
 
 
 def appearance_from_raw(raw: dict) -> dict:
@@ -251,8 +251,6 @@ def appearance_from_raw(raw: dict) -> dict:
         out["theme"] = a["theme"]
     if isinstance(a.get("accent"), str) and ACCENT_RE.match(a["accent"]):
         out["accent"] = a["accent"].lower()
-    if isinstance(a.get("glass"), bool):
-        out["glass"] = a["glass"]
     if a.get("density") in ("comfortable", "compact"):
         out["density"] = a["density"]
     return out
@@ -268,14 +266,11 @@ def checked_appearance(given: dict) -> dict:
         out["theme"] = given["theme"]
     if "accent" in given:
         if not isinstance(given["accent"], str) or not ACCENT_RE.match(given["accent"]):
-            err(422, "Accent colour must look like #0a84ff")
+            err(422, "Accent colour must look like #d9912b")
         out["accent"] = given["accent"].lower()
     if "density" in given:
         if given["density"] not in ("comfortable", "compact"):
             err(422, "Density must be comfortable or compact")
         out["density"] = given["density"]
-    if "glass" in given:
-        if not isinstance(given["glass"], bool):
-            err(422, "Glass must be true or false")
-        out["glass"] = given["glass"]
+    # "glass" was retired with the Chart Desk redesign; older pages may still send it, so it's ignored.
     return out

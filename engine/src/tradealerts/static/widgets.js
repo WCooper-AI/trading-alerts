@@ -167,7 +167,7 @@ function mix(hex, toward, t) {
 }
 /** The accent, darkened or lightened just enough to be readable as text on the page (WCAG 4.5:1). */
 function readableAccent(accent, dark) {
-  const bg = dark ? "#0b0b0e" : "#eef1f7";
+  const bg = dark ? "#0F151C" : "#E8EBEE";
   const toward = dark ? "#ffffff" : "#000000";
   let c = accent;
   for (let t = 0; t <= 1 && contrastRatio(c, bg) < 4.5; t += 0.05) c = mix(accent, toward, t);
@@ -245,7 +245,7 @@ function candleChart(initial, { height = 380, onPick = null, title = null, onMar
     const x = (i) => 8 + slot * (i + 0.5);
     const y = (v) => TOP + ((hi - v) * (PB - TOP)) / (hi - lo);
     geom = { view, slot, x, y, lo, hi, d, end, PB, inds, at };
-    svgEl.appendChild(svg("rect", { x: 0, y: 0, width: W, height: H, rx: 16, class: "chart-bg" }));
+    svgEl.appendChild(svg("rect", { x: 0, y: 0, width: W, height: H, rx: 8, class: "chart-bg" }));
     // grid + price axis
     for (let k = 0; k <= 4; k++) {
       const v = lo + ((hi - lo) * k) / 4;

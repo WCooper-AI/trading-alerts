@@ -240,6 +240,9 @@ async function boot() {
         applyAppearance(app.session.appearance);
         saveAppearance({ theme: legacy }); // carry over the light/dark choice made before it was saved in settings
       } else applyAppearance(app.session.appearance);
+      let migrated = "1";
+      try { migrated = localStorage.getItem("ta-theme-v2"); localStorage.setItem("ta-theme-v2", "1"); } catch (_) { /* no storage */ }
+      if (!migrated && String(app.appearance.accent).toLowerCase() === "#0a84ff") saveAppearance({ accent: "#d9912b" }); // old blue default → amber, once
       try { localStorage.removeItem("ta-theme"); } catch (_) { /* no storage */ }
     }
     [app.meta, app.recipes] = await Promise.all([GET("/meta"), GET("/recipes")]);

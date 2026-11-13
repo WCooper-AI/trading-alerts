@@ -22,6 +22,10 @@ function h(tag, attrs, ...kids) {
     else if (k === "value") el.value = v;
     else if (k === "checked") el.checked = !!v;
     else if (k === "text") el.textContent = v;
+    else if (k === "style") { // set through the CSSOM, which a strict style-src CSP allows (style="" attributes it would block)
+      if (typeof v === "object") Object.assign(el.style, v);
+      else el.style.cssText = v;
+    }
     else el.setAttribute(k, v === true ? "" : v);
   }
   append(el, kids);

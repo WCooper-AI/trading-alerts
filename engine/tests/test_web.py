@@ -274,10 +274,10 @@ def test_backtest_custom_dates_still_work(client):
 
 
 def test_appearance_saved_in_settings(client, ws):
-    assert client.get("/api/session").json()["appearance"] == {"theme": "auto", "accent": "#0a84ff", "glass": True, "density": "comfortable"}
+    assert client.get("/api/session").json()["appearance"] == {"theme": "auto", "accent": "#d9912b", "density": "comfortable"}
     r = client.put("/api/appearance", json={"accent": "#BF5AF2", "glass": False}, headers=H)
     assert r.status_code == 200 and r.json()["accent"] == "#bf5af2"
-    assert client.get("/api/session").json()["appearance"] == {"theme": "auto", "accent": "#bf5af2", "glass": False, "density": "comfortable"}
+    assert client.get("/api/session").json()["appearance"] == {"theme": "auto", "accent": "#bf5af2", "density": "comfortable"}
     assert "notifiers" in yaml.safe_load((ws / "config.yaml").read_text())  # other settings kept
     assert client.put("/api/appearance", json={"accent": "red; }"}, headers=H).status_code == 422
 

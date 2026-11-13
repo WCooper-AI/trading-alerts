@@ -3,13 +3,15 @@
 /* Trading Alerts web interface: Appearance and the settings page.
    Loaded as plain scripts in order (see SCRIPTS in web/app.py); they share one scope. */
 
-// --------------------------------------------------------------------- appearance (theme, accent, glass)
+// --------------------------------------------------------------------- appearance (theme, accent, density)
 
 const ACCENTS = [
-  ["#0a84ff", "Blue"], ["#5e5ce6", "Indigo"], ["#bf5af2", "Purple"], ["#ff375f", "Pink"], ["#ff453a", "Red"],
+  ["#d9912b", "Amber"], ["#0a84ff", "Blue"], ["#5e5ce6", "Indigo"], ["#bf5af2", "Purple"], ["#ff375f", "Pink"], ["#ff453a", "Red"],
   ["#ff9f0a", "Orange"], ["#ffd60a", "Yellow"], ["#30d158", "Green"], ["#40c8e0", "Teal"], ["#8e8e93", "Graphite"],
 ];
-app.appearance = { theme: "auto", accent: "#0a84ff", glass: true };
+app.appearance = { theme: "auto", accent: "#d9912b" };
+// The default accent defers to the per-theme amber in app.css.
+const DEFAULT_ACCENTS = ["#d9912b"];
 
 /** Black or white text, whichever reads better on the accent colour. */
 function inkFor(hex) {
@@ -24,12 +26,15 @@ function applyAppearance(change) {
   const root = document.documentElement;
   if (a.theme === "light" || a.theme === "dark") root.setAttribute("data-theme", a.theme);
   else root.removeAttribute("data-theme");
-  root.style.setProperty("--accent", a.accent);
-  root.style.setProperty("--accent-ink", inkFor(a.accent));
-  if (a.glass === false) root.setAttribute("data-glass", "off"); else root.removeAttribute("data-glass");
+  const custom = !DEFAULT_ACCENTS.includes(String(a.accent).toLowerCase());
+  if (custom) {
+    root.style.setProperty("--accent", a.accent);
+    root.style.setProperty("--accent-ink", inkFor(a.accent));
+  } else ["--accent", "--accent-ink", "--accent-text"].forEach((k) => root.style.removeProperty(k));
+  root.removeAttribute("data-glass"); // retired setting
   if (a.density === "compact") root.setAttribute("data-density", "compact"); else root.removeAttribute("data-density");
   const dark = (a.theme === "dark") || (a.theme !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-  root.style.setProperty("--accent-text", readableAccent(a.accent, dark));
+  if (custom) root.style.setProperty("--accent-text", readableAccent(a.accent, dark));
   try { localStorage.setItem("ta-appearance", JSON.stringify({ ...a, ink: inkFor(a.accent) })); } catch (_) { /* not cached */ }
   renderThemeToggle();
 }
@@ -86,8 +91,6 @@ function appearanceSection() {
     custom.addEventListener("input", () => applyAppearance({ accent: custom.value }));
     custom.addEventListener("change", () => { saveAppearance({ accent: custom.value }); render(); });
     swatches.appendChild(h("label", { class: "custom-colour" }, custom, "Custom"));
-    const glass = h("input", { type: "checkbox", id: "glass-on", checked: a.glass !== false,
-      onchange: (e) => saveAppearance({ glass: e.target.checked }) });
     append(body, [
       h("div", { class: "field" }, h("label", {}, "Theme"), theme),
       h("div", { class: "field" }, h("label", {}, "Accent colour"), swatches),
@@ -97,8 +100,6 @@ function appearanceSection() {
           "aria-pressed": String((a.density || "comfortable") === v), onclick: () => { saveAppearance({ density: v }); render(); } }, t));
         return seg;
       })()),
-      h("div", {}, h("label", { class: "check", for: "glass-on" }, glass, "Glass effects"),
-        h("p", { class: "after-note" }, "Frosted, see-through panels. Turn them off if the app feels slow on an older computer.")),
     ]);
   }
   render();
