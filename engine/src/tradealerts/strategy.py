@@ -101,6 +101,9 @@ class Strategy:
     spread: float = 0.0
     funding_pct: float = 0.0
     use_data_spread: bool = True
+    commission: float = 0.0  # money per fill (entry and exit each)
+    commission_pct: float = 0.0  # % of the trade's value per fill
+    borrow_pct: float = 0.0  # yearly, short positions only, charged nightly like funding
     template: bool = False
     enabled: bool = True
     alerts_enabled: bool = True
@@ -371,11 +374,18 @@ def strategy_from_dict(data: dict, sid: str = "", path: Path | None = None, raw_
         raise StrategyError("risk.risk_per_trade_pct above 10% is almost certainly a typo")
 
     costs = data.get("costs") or {}
-    _check_keys(costs, {"spread", "funding_pct", "use_data_spread"}, "costs")
+    _check_keys(costs, {"spread", "funding_pct", "use_data_spread", "commission", "commission_pct", "borrow_pct"}, "costs")
     spread = _number(given(costs, "spread", builtin.get("spread", 0.0)), "costs.spread", 0)
     funding = _number(given(costs, "funding_pct", builtin.get("funding", 0.0)), "costs.funding_pct", 0)
     if funding > 100:
         raise StrategyError("costs.funding_pct is a yearly percentage; above 100 is almost certainly a typo")
+    commission = _number(given(costs, "commission", builtin.get("commission", 0.0)), "costs.commission", 0)
+    commission_pct = _number(given(costs, "commission_pct", builtin.get("commission_pct", 0.0)), "costs.commission_pct", 0)
+    if commission_pct > 5:
+        raise StrategyError("costs.commission_pct is a percentage of each fill's value; above 5 is almost certainly a typo")
+    borrow = _number(given(costs, "borrow_pct", builtin.get("borrow", 0.0)), "costs.borrow_pct", 0)
+    if borrow > 100:
+        raise StrategyError("costs.borrow_pct is a yearly percentage; above 100 is almost certainly a typo")
 
     alerts = data.get("alerts") or {}
     _check_keys(alerts, {"enabled", "priority"}, "alerts")
@@ -395,6 +405,9 @@ def strategy_from_dict(data: dict, sid: str = "", path: Path | None = None, raw_
             spread=spread,
             funding_pct=funding,
             use_data_spread=bool(costs.get("use_data_spread", True)),
+            commission=commission,
+            commission_pct=commission_pct,
+            borrow_pct=borrow,
             template=bool(data.get("template", False)),
             enabled=bool(data.get("enabled", True)),
             alerts_enabled=bool(alerts.get("enabled", True)),

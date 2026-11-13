@@ -147,7 +147,7 @@ def portfolio(parts: list[tuple[str, str, BacktestResult]], balance: float) -> d
     and loss together gives the shared account. Also works out how much was at risk
     at once (every open trade's distance to its stop) and how alike the strategies' days were.
     """
-    pnl_curves, per, risk_events = {}, [], []
+    pnl_curves, per, risk_events, open_events = {}, [], [], []
     for sid, name, res in parts:
         pnl = res.equity - res.strategy.risk.account_size
         pnl_curves[sid] = pnl[~pnl.index.duplicated(keep="last")]
@@ -155,13 +155,16 @@ def portfolio(parts: list[tuple[str, str, BacktestResult]], balance: float) -> d
         m = res.metrics
         per.append({"id": sid, "name": name, "market": m["market"], "trades": m["trades"],
                     "pnl": float(pnl.iloc[-1]), "return_pct": float(pnl.iloc[-1]) / balance * 100,
-                    "max_drawdown_pct": m["max_drawdown_pct"], "win_rate_pct": m.get("win_rate_pct")})
+                    "max_drawdown_pct": m["max_drawdown_pct"], "win_rate_pct": m.get("win_rate_pct"),
+                    "direction": res.strategy.direction, "timeframe": res.strategy.market.timeframe})
         if len(t):
             pv = res.strategy.risk.point_value
             for row in t.itertuples():
                 amount = abs(row.entry_price - row.stop) * row.size * pv
                 risk_events.append((pd.Timestamp(row.entry_time), amount, sid))
                 risk_events.append((pd.Timestamp(row.exit_time), -amount, sid))
+                open_events.append((pd.Timestamp(row.entry_time), 1, sid))
+                open_events.append((pd.Timestamp(row.exit_time), -1, sid))
     grid_start = min(c.index[0] for c in pnl_curves.values())
     grid_end = max(c.index[-1] for c in pnl_curves.values())
     grid = pd.date_range(grid_start.floor("h"), grid_end.ceil("h"), freq="1h")
@@ -185,11 +188,14 @@ def portfolio(parts: list[tuple[str, str, BacktestResult]], balance: float) -> d
     if aligned.shape[1] > 1 and len(daily) > 10:
         c = daily.loc[:, daily.std() > 0].corr()
         corr = {"ids": list(c.columns), "values": [[None if pd.isna(x) else float(x) for x in row] for row in c.to_numpy()]}
+    exposure = _exposure(per, aligned, open_events, grid, daily, corr)
     return {
         "per_strategy": per,
         "equity": equity,
         "drawdown": dd,
         "open_risk": open_risk,
+        "pnl_curves": aligned,
+        "exposure": exposure,
         "metrics": {
             "start": grid[0].isoformat(), "end": grid[-1].isoformat(),
             "start_equity": balance, "end_equity": float(equity.iloc[-1]),
@@ -199,8 +205,76 @@ def portfolio(parts: list[tuple[str, str, BacktestResult]], balance: float) -> d
             "max_open_risk_pct": float(open_risk.max()),
             "avg_open_risk_pct": float(open_risk[open_risk > 0].mean()) if (open_risk > 0).any() else 0.0,
             "time_with_risk_pct": float((open_risk > 0).mean() * 100),
+            "max_open_trades": exposure["max_open_trades"],
+            "time_in_market_pct": exposure["time_in_market_pct"],
+            "avg_correlation": exposure["avg_correlation"],
+            "diversification_ratio": exposure["diversification_ratio"],
         },
         "correlation": corr,
+    }
+
+
+def _exposure(per: list[dict], aligned: pd.DataFrame, open_events: list[tuple], grid: pd.DatetimeIndex,
+              daily: pd.DataFrame, corr: dict | None) -> dict:
+    """How the strategies share the account: who made the profit, how often trades overlap,
+    how much sits in each market, and how much the mix actually spreads the risk."""
+    # contribution: each strategy's share of the total profit (or loss), and time in a trade
+    total = sum(p["pnl"] for p in per)
+    gross = sum(abs(p["pnl"]) for p in per)
+    in_trade = {p["id"]: pd.Series(0.0, index=grid) for p in per}
+    if open_events:
+        ev = pd.DataFrame(open_events, columns=["time", "n", "sid"])
+        ev["time"] = pd.to_datetime(ev["time"], utc=True)
+        ev = ev.sort_values(["time", "n"])
+        for sid, g in ev.groupby("sid"):
+            run = g.set_index("time")["n"].cumsum()
+            run = run[~run.index.duplicated(keep="last")]
+            in_trade[sid] = run.reindex(run.index.union(grid)).ffill().reindex(grid).fillna(0.0).clip(lower=0)
+    open_trades = sum(in_trade.values()) if in_trade else pd.Series(0.0, index=grid)
+    for p in per:
+        p["contribution_pct"] = (p["pnl"] / total * 100) if total else (abs(p["pnl"]) / gross * 100 if gross else 0.0)
+        p["time_in_market_pct"] = float((in_trade[p["id"]] > 0).mean() * 100)
+        p["worst_day"] = float(daily[p["id"]].min()) if p["id"] in daily and len(daily) else 0.0
+        p["best_day"] = float(daily[p["id"]].max()) if p["id"] in daily and len(daily) else 0.0
+
+    # by market: profit, trades and time in a trade, per market label
+    by_market: dict[str, dict] = {}
+    for p in per:
+        bm = by_market.setdefault(p["market"], {"market": p["market"], "strategies": 0, "trades": 0, "pnl": 0.0, "ids": []})
+        bm["strategies"] += 1
+        bm["trades"] += p["trades"]
+        bm["pnl"] += p["pnl"]
+        bm["ids"].append(p["id"])
+    for bm in by_market.values():
+        busy = sum(in_trade[i] for i in bm["ids"]) if bm["ids"] else pd.Series(0.0, index=grid)
+        bm["time_in_market_pct"] = float((busy > 0).mean() * 100)
+        bm["share_pct"] = (bm["pnl"] / total * 100) if total else 0.0
+        del bm["ids"]
+
+    # overlap: how many strategies were in a trade at once, as a share of time
+    counts = open_trades.round().astype(int)
+    overlap = counts.value_counts(normalize=True).sort_index()
+    overlap_pct = {int(k): float(v * 100) for k, v in overlap.items()}
+
+    # how alike: average of the pairwise correlations, and the diversification ratio
+    # (sum of each strategy's daily volatility / the combined daily volatility; 1 = no benefit)
+    avg_corr = None
+    if corr and len(corr["ids"]) > 1:
+        vals = [v for i, row in enumerate(corr["values"]) for j, v in enumerate(row) if j > i and v is not None]
+        avg_corr = float(np.mean(vals)) if vals else None
+    div_ratio = None
+    if aligned.shape[1] > 1 and len(daily) > 10:
+        stds = daily.std()
+        combined = daily.sum(axis=1).std()
+        if combined and combined > 0:
+            div_ratio = float(stds.sum() / combined)
+    return {
+        "by_market": sorted(by_market.values(), key=lambda b: -abs(b["pnl"])),
+        "overlap_pct": overlap_pct,
+        "max_open_trades": int(counts.max()) if len(counts) else 0,
+        "time_in_market_pct": float((open_trades > 0).mean() * 100),
+        "avg_correlation": avg_corr,
+        "diversification_ratio": div_ratio,
     }
 
 

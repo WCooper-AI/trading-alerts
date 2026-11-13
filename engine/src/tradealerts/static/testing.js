@@ -670,7 +670,8 @@ function renderBacktest(res) {
     ["Longest time below a previous high", `${num(m.longest_underwater_days, 1)} days`],
     ["How trades ended", Object.entries(m.exit_reasons || {}).map(([k, v]) => `${k.replace(/_/g, " ")} ${v}`).join(", ")],
     ["Spread paid", money(m.total_spread_cost || 0, sym) + (m.used_data_spread ? " (real bid/ask)" : "")],
-    ["Overnight funding paid", money(m.total_funding || 0, sym)],
+    ["Overnight funding paid", money(m.total_funding || 0, sym) + (m.total_borrow ? ` (of which borrow fee ${money(m.total_borrow, sym)})` : "")],
+    ...(m.total_commission ? [["Commission paid", money(m.total_commission, sym)]] : []),
     ["Stop or target first?", m.used_finer_candles ? "Checked with finer candles" : "Stop assumed first"],
   );
   append(box, [h("dl", { class: "metrics" }, rows.map(([k, v]) => [h("dt", {}, k), h("dd", {}, v)]))]);
