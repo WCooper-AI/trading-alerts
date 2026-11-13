@@ -63,6 +63,10 @@ def normalise(df: pd.DataFrame, assume_tz: str = "UTC") -> pd.DataFrame:
     df["volume"] = df["volume"].fillna(0.0)
     df = df[~df.index.duplicated(keep="last")].sort_index()
     df = df.astype(float)
+    if not np.isfinite(df[OHLCV].to_numpy()).all():
+        raise DataError("Price data contains non-finite (infinite) OHLCV values.")
+    if not (df["volume"] >= 0).all():
+        raise DataError("Price data contains negative volume.")
     if "spread" in df.columns:
         sp = df["spread"].dropna()
         if not (np.isfinite(sp).all() and (sp >= 0).all()):

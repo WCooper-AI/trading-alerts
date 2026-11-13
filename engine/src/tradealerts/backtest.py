@@ -9,6 +9,7 @@ import pandas as pd
 
 from . import timeframes
 from .data import find_jumps
+from .markethours import trades_24_7
 from .simulator import Event, Simulator
 from .strategy import Strategy
 
@@ -166,7 +167,7 @@ def run_backtest(strategy: Strategy, df: pd.DataFrame, fine: pd.DataFrame | None
 
 def compute_metrics(strategy: Strategy, trades: pd.DataFrame, equity: pd.Series, df: pd.DataFrame, bars_in_market: int) -> dict:
     start_eq = strategy.risk.account_size
-    peak = equity.cummax()
+    peak = equity.cummax().clip(lower=start_eq)
     dd = (equity / peak - 1) * 100
     m = {
         "market": strategy.market.label,
@@ -212,8 +213,8 @@ def compute_metrics(strategy: Strategy, trades: pd.DataFrame, equity: pd.Series,
             r_histogram=histogram(trades["r_multiple"].to_numpy(dtype=float), R_EDGES),
             hold_histogram=hold_histogram(trades),
         )
-    m.update(risk_ratios(equity, strategy.market.timeframe))
-    m["sharpe_ci"] = sharpe_ci(trades, equity, strategy.market.timeframe, m["sharpe"])
+    m.update(risk_ratios(equity, strategy.market.timeframe, symbol=strategy.market.symbol))
+    m["sharpe_ci"] = sharpe_ci(trades, equity, strategy.market.timeframe, m["sharpe"], symbol=strategy.market.symbol)
     m["longest_underwater_days"] = longest_underwater_days(equity)
     m["monthly_returns"] = monthly_returns(equity)
     return m
@@ -267,26 +268,31 @@ def hold_histogram(trades: pd.DataFrame) -> list[dict]:
     return histogram(hold_times(trades).to_numpy(dtype=float), HOLD_EDGES_HOURS)
 
 
-def bars_per_year(index: pd.Index, timeframe: str) -> float:
-    """Candles in a year, for annualising. Daily and longer: 252 trading days (365 for weekly
-    and up), unchanged. Intraday: 252 days times the candles actually seen per weekday, capped
-    at a full 24 hours' worth, so a market open 6.5 h a day isn't counted as trading 24 h.
-    24 h markets (FX, crypto) hit the cap and keep 252 x 24 h."""
+def bars_per_year(index: pd.Index, timeframe: str, symbol: str = "") -> float:
+    """Candles in a year, for annualising. Daily and longer: 252 trading days (365 for 24/7
+    markets or weekly and up). Intraday: trading days times the candles actually seen per
+    session day, capped at a full 24 hours' worth, so a market open 6.5 h a day isn't counted
+    as trading 24 h. 24/7 markets (crypto) use 365 days."""
     bar = timeframes.to_timedelta(timeframe)
     if bar > pd.Timedelta(days=1):
         return pd.Timedelta(days=365) / bar
+    is_24_7 = bool(symbol and trades_24_7(symbol))
+    trading_days = 365 if is_24_7 else 252
     full = pd.Timedelta(days=1) / bar
     if bar < pd.Timedelta(days=1) and isinstance(index, pd.DatetimeIndex) and len(index) >= 2:
         first, last = index[0].date(), index[-1].date()
-        weekdays = int(np.busday_count(first, last + pd.Timedelta(days=1)))
-        if weekdays > 0:
-            full = min(full, len(index) / weekdays)
-    return 252 * full
+        if is_24_7:
+            days = max(1, (last - first).days + 1)
+        else:
+            days = int(np.busday_count(first, last + pd.Timedelta(days=1)))
+        if days > 0:
+            full = min(full, len(index) / days)
+    return trading_days * full
 
 
-def risk_ratios(equity: pd.Series, timeframe: str) -> dict:
+def risk_ratios(equity: pd.Series, timeframe: str, symbol: str = "") -> dict:
     """Sharpe and Sortino ratios from candle-to-candle changes in the balance, annualised
-    assuming the market trades about 252 days a year (see ``bars_per_year``). None when
+    according to the market's trading schedule (see ``bars_per_year``). None when
     there is too little variation to measure (e.g. no trades)."""
     out = {"sharpe": None, "sortino": None}
     if len(equity) < 3:
@@ -294,7 +300,7 @@ def risk_ratios(equity: pd.Series, timeframe: str) -> dict:
     r = equity.pct_change().dropna().to_numpy(dtype=float)
     if len(r) < 2:
         return out
-    scale = float(np.sqrt(bars_per_year(equity.index, timeframe)))
+    scale = float(np.sqrt(bars_per_year(equity.index, timeframe, symbol=symbol)))
     mean = float(r.mean())
     sd = float(r.std(ddof=1))
     if sd > 0:
@@ -325,7 +331,7 @@ def t_crit_95(df: int) -> float:
             + (3 * z**7 + 19 * z**5 + 17 * z**3 - 15 * z) / (384 * v**3))
 
 
-def sharpe_ci(trades: pd.DataFrame, equity: pd.Series, timeframe: str, sharpe: float | None) -> list[float] | None:
+def sharpe_ci(trades: pd.DataFrame, equity: pd.Series, timeframe: str, sharpe: float | None, symbol: str = "") -> list[float] | None:
     """95% range for the headline Sharpe ratio, driven by the number of trades.
 
     The headline ratio is measured candle by candle, but its uncertainty comes from how few
@@ -346,7 +352,7 @@ def sharpe_ci(trades: pd.DataFrame, equity: pd.Series, timeframe: str, sharpe: f
     sd_t, sd_c = float(tr.std(ddof=1)), float(r.std(ddof=1))
     if not (sd_t > 0 and sd_c > 0):
         return None
-    scale = float(np.sqrt(bars_per_year(equity.index, timeframe)))
+    scale = float(np.sqrt(bars_per_year(equity.index, timeframe, symbol=symbol)))
     half = t_crit_95(len(tr) - 1) * sd_t * np.sqrt(len(tr)) / (len(r) * sd_c) * scale
     return [float(sharpe - half), float(sharpe + half)]
 

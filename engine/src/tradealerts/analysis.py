@@ -13,6 +13,7 @@ None of these predict future results; they describe the past more honestly.
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 
@@ -182,11 +183,11 @@ def portfolio_weights(mode: str | None, parts: list[tuple[str, str, BacktestResu
     raw = {}
     for sid in ids:
         v = custom.get(sid)
-        if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0 or np.isnan(v):
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0:
             raise ValueError("Fill in a share (%) of 0 or more for every chosen strategy")
         raw[sid] = float(v)
     total = sum(raw.values())
-    if total <= 0:
+    if not math.isfinite(total) or total <= 0:
         raise ValueError("The shares must add up to more than 0")
     return {sid: v / total for sid, v in raw.items()}
 
@@ -214,7 +215,7 @@ def portfolio(parts: list[tuple[str, str, BacktestResult]], balance: float,
         m = res.metrics
         per.append({"id": sid, "name": name, "market": m["market"], "trades": m["trades"],
                     "pnl": float(pnl.iloc[-1]), "return_pct": float(pnl.iloc[-1]) / balance * 100,
-                    "max_drawdown_pct": float(((own / own.cummax() - 1) * 100).min()), "win_rate_pct": m.get("win_rate_pct"),
+                    "max_drawdown_pct": float(((own / own.cummax().clip(lower=balance) - 1) * 100).min()), "win_rate_pct": m.get("win_rate_pct"),
                     "direction": res.strategy.direction, "timeframe": res.strategy.market.timeframe,
                     "weight_pct": (weights[sid] if weights else 1.0 / n) * 100})
         if len(t):
@@ -230,7 +231,7 @@ def portfolio(parts: list[tuple[str, str, BacktestResult]], balance: float,
     grid = pd.date_range(grid_start.floor("h"), grid_end.ceil("h"), freq="1h")
     aligned = pd.DataFrame({k: v.reindex(v.index.union(grid)).ffill().reindex(grid) for k, v in pnl_curves.items()}).fillna(0.0)
     equity = balance + aligned.sum(axis=1)
-    dd = (equity / equity.cummax() - 1) * 100
+    dd = (equity / equity.cummax().clip(lower=balance) - 1) * 100
 
     # open risk over time, as % of the starting balance
     if risk_events:
@@ -419,7 +420,7 @@ def shared_account(parts: list[tuple[str, str, BacktestResult]], balance: float,
     eq = pd.Series([balance] + [v for _, v in eq_points], index=pd.DatetimeIndex([start] + [t for t, _ in eq_points]))
     eq = eq[~eq.index.duplicated(keep="last")].sort_index()
     equity_s = eq.reindex(eq.index.union(grid)).ffill().reindex(grid).fillna(float(balance))
-    dd = (equity_s / equity_s.cummax() - 1) * 100
+    dd = (equity_s / equity_s.cummax().clip(lower=balance) - 1) * 100
 
     curves = {}
     for sid in per:
@@ -447,7 +448,7 @@ def shared_account(parts: list[tuple[str, str, BacktestResult]], balance: float,
         p["win_rate_pct"] = len(wins) / p["taken"] * 100 if p["taken"] else None
         p["return_pct"] = p["pnl"] / balance * 100
         own = balance + aligned[p["id"]]
-        p["max_drawdown_pct"] = float(((own / own.cummax() - 1) * 100).min())
+        p["max_drawdown_pct"] = float(((own / own.cummax().clip(lower=balance) - 1) * 100).min())
     daily = aligned.resample("1D").last().diff().dropna(how="all")
     corr = None
     if aligned.shape[1] > 1 and len(daily) > 10:

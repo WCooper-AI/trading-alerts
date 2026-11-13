@@ -11,6 +11,7 @@ from __future__ import annotations
 import pandas as pd
 
 from . import timeframes
+from .markethours import trades_24_7
 
 # a gap must be at least this many bars wide before it counts (one missing candle is normal noise)
 GAP_BARS = 3
@@ -50,7 +51,7 @@ def _fmt(t: pd.Timestamp) -> str:
     return f"{t:%a %d %b %H:%M}"
 
 
-def check(df: pd.DataFrame, timeframe: str, now=None) -> list[dict]:
+def check(df: pd.DataFrame, timeframe: str, now=None, symbol: str = "") -> list[dict]:
     """Warnings about the frame, each {"kind", "text", "count"}; empty when it looks fine.
 
     kinds: "gap" (missing candles, weekends ignored), "stale" (last bar well behind now),
@@ -79,8 +80,9 @@ def check(df: pd.DataFrame, timeframe: str, now=None) -> list[dict]:
         idx, df = idx[order], df.iloc[order]
 
     # gaps
+    is_24_7 = bool(symbol and trades_24_7(symbol))
     diffs = pd.Series(idx[1:] - idx[:-1], index=idx[1:])
-    gaps = [(a, b) for b, d in diffs[diffs > GAP_BARS * bar].items() for a in [b - d] if not _spans_weekend(a, b)]
+    gaps = [(a, b) for b, d in diffs[diffs > GAP_BARS * bar].items() for a in [b - d] if is_24_7 or not _spans_weekend(a, b)]
     if gaps:
         a, b = max(gaps, key=lambda g: g[1] - g[0])
         missing = int((b - a) / bar) - 1
@@ -94,7 +96,7 @@ def check(df: pd.DataFrame, timeframe: str, now=None) -> list[dict]:
     holes = []
     for b, d in diffs[diffs > GAP_BARS * bar].items():
         a = b - d
-        n = _weekday_candles(a, b, bar)
+        n = max(0, int((b - a) / bar) - 1) if is_24_7 else _weekday_candles(a, b, bar)
         if n > (0 if (a, b) in gaps else GAP_BARS):
             holes.append((a, b, n))
     if len(holes) > 1 or (holes and not gaps):
@@ -107,7 +109,7 @@ def check(df: pd.DataFrame, timeframe: str, now=None) -> list[dict]:
     # stale last bar
     now = pd.Timestamp.now(tz="UTC") if now is None else _utc(now)
     age = now - (idx[-1] + bar)
-    if age > STALE_BARS * bar and not _spans_weekend(idx[-1], now):
+    if age > STALE_BARS * bar and (is_24_7 or not _spans_weekend(idx[-1], now)):
         hours = age.total_seconds() / 3600
         ago = f"{int(age.total_seconds() // 60)} min" if hours < 1 else f"{hours:.0f} h" if hours < 48 else f"{hours / 24:.0f} days"
         out.append({"kind": "stale", "count": 1,
