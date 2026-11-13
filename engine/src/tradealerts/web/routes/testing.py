@@ -249,6 +249,12 @@ def optimise(request: Request, body: dict = Body(...), ws: Workspace = Depends(w
     min_trades = body.get("min_trades", analysis.MIN_TRADES)
     if isinstance(min_trades, bool) or not isinstance(min_trades, int) or min_trades < 0:
         err(422, "The minimum number of trades must be a whole number")
+    holdout = body.get("holdout_pct", 0) or 0
+    if isinstance(holdout, bool) or not isinstance(holdout, (int, float)) or not 0 <= holdout <= analysis.MAX_HOLDOUT_PCT:
+        err(422, f"Keep back between 0 and {analysis.MAX_HOLDOUT_PCT}% of the period")
+    folds = body.get("walk_forward", 0) or 0
+    if isinstance(folds, bool) or not isinstance(folds, int) or folds not in (0, *analysis.WALK_FORWARD_FOLDS):
+        err(422, f"The walk-forward check uses {analysis.WALK_FORWARD_FOLDS[0]} to {analysis.WALK_FORWARD_FOLDS[-1]} stretches")
     try:
         combos = analysis.grid(axes, combos_cap(ctx))
     except ValueError as exc:
@@ -265,7 +271,8 @@ def optimise(request: Request, body: dict = Body(...), ws: Workspace = Depends(w
     workers = max(1, os.cpu_count() or 1) if ctx.edition == "selfhost" else 1
     extra = {"notes": notes, "currency": s.risk.symbol, "combinations": len(combos)}
     try:
-        job = ctx.jobs.start(ws.owner, analysis.optimise, variants, df, fine, test_start, score, int(min_trades), workers, extra)
+        job = ctx.jobs.start(ws.owner, analysis.optimise, variants, df, fine, test_start, score, int(min_trades), workers, extra,
+                             float(holdout), int(folds))
     except Busy as exc:
         err(429, str(exc))
     return {"job": job, "combinations": len(combos)}

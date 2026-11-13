@@ -252,6 +252,8 @@ function analysisPanel({ getData, render, intro, settings, apply, runLabel = "Ru
 /** Optimiser: every combination of up to three settings, run in the background with progress and a Stop button. */
 const MAX_OPT_SETTINGS = 3;
 const SCORE_OPTIONS = [["return", "Return"], ["return_dd", "Return ÷ worst drop"], ["profit_factor", "Profit factor"], ["sharpe", "Steadiness (Sharpe)"]];
+const HOLDOUT_OPTIONS = [[0, "Nothing: rank on the whole period"], [20, "The last 20% of the period"], [30, "The last 30% of the period"], [40, "The last 40% of the period"], [50, "The last half of the period"]];
+const FOLD_OPTIONS = [[0, "Off"], [3, "3 stretches"], [4, "4 stretches"], [5, "5 stretches"], [6, "6 stretches"]];
 function comboCap() { return typeof isHosted === "function" && isHosted() ? 200 : 2000; }
 
 function optimiserPane({ fetchData, settings, apply, period }) {
@@ -259,6 +261,8 @@ function optimiserPane({ fetchData, settings, apply, period }) {
   let axes = [newAxis()];
   let score = pref("ta-opt-score", "return");
   let minTrades = 30;
+  let holdout = Number(pref("ta-opt-holdout", "0")) || 0;
+  let folds = Number(pref("ta-opt-folds", "0")) || 0;
   let job = null;
   const axesBox = h("div", { class: "opt-axes" });
   const note = h("p", { class: "small muted", "aria-live": "polite" });
@@ -369,7 +373,7 @@ function optimiserPane({ fetchData, settings, apply, period }) {
     if (!data) return;
     const chosenAxes = ready.map((a) => ({ ...a.chosen }));
     const body = {
-      data, score, min_trades: minTrades, ...period.value(),
+      data, score, min_trades: minTrades, holdout_pct: holdout, walk_forward: folds, ...period.value(),
       settings: ready.map((a) => ({ setting: a.chosen.kind === "knob" ? { kind: "knob", key: a.chosen.key } : { kind: "path", path: a.chosen.path }, values: a.values })),
     };
     run.disabled = true;
@@ -384,6 +388,10 @@ function optimiserPane({ fetchData, settings, apply, period }) {
 
   const scorePick = h("select", { "aria-label": "Rank by" }, SCORE_OPTIONS.map(([k, label]) => h("option", { value: k, selected: k === score ? "" : null }, label)));
   scorePick.addEventListener("change", () => { score = scorePick.value; savePref("ta-opt-score", score); });
+  const holdoutPick = h("select", { "aria-label": "Keep back" }, HOLDOUT_OPTIONS.map(([v, label]) => h("option", { value: String(v), selected: v === holdout ? "" : null }, label)));
+  holdoutPick.addEventListener("change", () => { holdout = Number(holdoutPick.value); savePref("ta-opt-holdout", String(holdout)); });
+  const foldsPick = h("select", { "aria-label": "Walk-forward check" }, FOLD_OPTIONS.map(([v, label]) => h("option", { value: String(v), selected: v === folds ? "" : null }, label)));
+  foldsPick.addEventListener("change", () => { folds = Number(foldsPick.value); savePref("ta-opt-folds", String(folds)); });
   const pane = h("section", { class: "section" },
     h("p", { class: "muted small tool-intro" }, "Tests every combination of up to three settings and ranks them. Runs in the background: you can stop it at any time."),
     axesBox, addBtn,
@@ -391,6 +399,9 @@ function optimiserPane({ fetchData, settings, apply, period }) {
       h("div", { class: "field" }, h("label", {}, "Rank by"), scorePick),
       h("div", { class: "field" }, h("label", {}, "Needs at least"), h("div", { class: "inline" },
         numberInput(minTrades, (n) => { minTrades = n; }, { label: "Minimum trades", min: 0, cls: "narrow", integer: true, allowEmpty: false }), h("span", { class: "small muted" }, "trades")))),
+    h("div", { class: "inline" },
+      h("div", { class: "field" }, h("label", {}, "Keep back", infoTip("Ranks the combinations on the first part of the period only, then shows how the winner did on the last part, which it never saw. A winner that holds up there is more likely to hold up live.")), holdoutPick),
+      h("div", { class: "field" }, h("label", {}, "Walk-forward check", infoTip("Splits the period into stretches. Before each stretch it picks the combination that scored best on all the data so far, then records how that combination did on the stretch. Every choice only uses the past, like tuning for real would.")), foldsPick)),
     note, h("div", { class: "tool-actions" }, run), progress, out);
   return { pane, out, refresh };
 }
@@ -410,26 +421,35 @@ function renderOptimiser(res, axes, onApply) {
   const ranked = [...scored].sort((a, b) => (b.enough_trades - a.enough_trades) || (b.score - a.score));
   const best = ranked[0];
   const enough = ranked.filter((r) => r.enough_trades).length;
+  const ho = res.holdout;
+  const part = ho ? (best.train || best) : best;
   append(box, [
-    h("p", { class: "result-lede" }, `From ${day(res.start)} to ${day(res.end)}, ${res.tested.toLocaleString()} combinations were tested in ${res.seconds}s. The best ${scoreName.toLowerCase()} came from `,
-      h("strong", {}, label(best.values)), ` (${fmtScore(best.score)}, ${signed(best.return_pct, "%")} over ${best.trades} trades).`),
-    enough < scored.length ? h("p", { class: "muted small" }, `${scored.length - enough} of ${scored.length} combinations made fewer than ${res.min_trades} trades and are ranked below the rest: too few trades to trust.`) : null,
+    h("p", { class: "result-lede" }, `From ${day(res.start)} to ${day(res.end)}, ${res.tested.toLocaleString()} combinations were tested in ${res.seconds}s. The best ${scoreName.toLowerCase()}`,
+      ho ? ` on the first ${100 - ho.pct}% of the period` : "", " came from ",
+      h("strong", {}, label(best.values)), ` (${fmtScore(best.score)}, ${signed(part.return_pct, "%")} over ${part.trades} trades).`),
+    enough < scored.length ? h("p", { class: "muted small" }, `${scored.length - enough} of ${scored.length} combinations made fewer than ${res.min_trades} trades${ho ? " in the ranking part" : ""} and are ranked below the rest: too few trades to trust.`) : null,
+    ho ? renderHoldout(ho, best, label) : null,
+    res.walk_forward ? renderWalkForwardGrid(res.walk_forward, label) : null,
     axes.length >= 2 ? heatmap(rows, axes, res, fmtScore) : null,
   ]);
   const shown = ranked.slice(0, 40);
   const table = h("table", { class: "trades sweep-table" },
-    h("thead", {}, h("tr", {}, h("th", {}, "#"), axes.map((a) => h("th", {}, a.label)), h("th", { class: "num" }, scoreName), h("th", { class: "num" }, "Return"),
-      h("th", { class: "num" }, "Worst drop"), h("th", { class: "num" }, "Trades"), h("th", { class: "num" }, "Profit factor"), onApply ? h("th", {}) : null)),
+    h("thead", {}, h("tr", {}, h("th", {}, "#"), axes.map((a) => h("th", {}, a.label)), h("th", { class: "num" }, scoreName), h("th", { class: "num" }, ho ? "Return (ranked part)" : "Return"),
+      h("th", { class: "num" }, "Worst drop"), h("th", { class: "num" }, "Trades"), h("th", { class: "num" }, "Profit factor"),
+      ho ? h("th", { class: "num" }, "Kept-back return") : null, ho ? h("th", { class: "num" }, "Kept-back trades") : null, onApply ? h("th", {}) : null)),
     h("tbody", {}, shown.map((r, i) => {
       const isNow = axes.every((a, k) => a.current === r.values[k]);
+      const p = ho && r.train ? r.train : r;
       return h("tr", { class: (isNow ? "current " : "") + (r.enough_trades ? "" : "muted") },
         h("td", {}, String(i + 1)),
         r.values.map((v, k) => h("td", {}, optionLabel(axes[k], v))),
         h("td", { class: "num" }, fmtScore(r.score), r.enough_trades ? null : h("span", { class: "tag", title: `Fewer than ${res.min_trades} trades` }, "few")),
-        h("td", { class: "num " + (r.return_pct >= 0 ? "gain" : "loss") }, signed(r.return_pct, "%")),
-        h("td", { class: "num" }, num(r.max_drawdown_pct, 1) + "%"),
-        h("td", { class: "num" }, String(r.trades)),
-        h("td", { class: "num" }, r.profit_factor === null || r.profit_factor === undefined ? "–" : num(r.profit_factor, 2)),
+        h("td", { class: "num " + (p.return_pct >= 0 ? "gain" : "loss") }, signed(p.return_pct, "%")),
+        h("td", { class: "num" }, num(p.max_drawdown_pct, 1) + "%"),
+        h("td", { class: "num" }, String(p.trades)),
+        h("td", { class: "num" }, p.profit_factor === null || p.profit_factor === undefined ? "–" : num(p.profit_factor, 2)),
+        ho ? h("td", { class: "num " + ((r.holdout || {}).return_pct >= 0 ? "gain" : "loss") }, r.holdout ? signed(r.holdout.return_pct, "%") : "–") : null,
+        ho ? h("td", { class: "num" }, r.holdout ? String(r.holdout.trades) : "–") : null,
         onApply ? h("td", { class: "num" }, isNow ? h("span", { class: "tag" }, "now") : h("button", { type: "button", class: "quiet", onclick: (e) => {
           onApply(axes, r.values);
           e.target.closest("tbody").querySelectorAll("tr").forEach((tr) => tr.classList.remove("current"));
@@ -445,6 +465,42 @@ function renderOptimiser(res, axes, onApply) {
       "Prefer a combination whose neighbours in the grid also did well, then run the luck check on it before trusting it."),
     res.notes && res.notes.length ? h("ul", { class: "warnings" }, res.notes.map((w) => h("li", {}, w))) : null]);
   return box;
+}
+
+/** How the winner did on the part of the period it was never ranked on. */
+function renderHoldout(ho, best, label) {
+  const b = ho.best;
+  if (!b) return h("p", { class: "notice" }, "No combination made any trades in the ranking part of the period, so there is nothing to check on the kept-back part.");
+  const gap = b.train_return_pct - b.holdout_return_pct;
+  let verdict;
+  if (!b.holdout_trades) verdict = "It made no trades in the kept-back part, so nothing was learned about it there.";
+  else if (b.holdout_return_pct <= 0) verdict = "It lost money on the part it never saw: its result above owes a lot to fitting the past.";
+  else if (gap > Math.max(5, Math.abs(b.train_return_pct) * 0.5)) verdict = "It still made money on the part it never saw, but less. Expect live results nearer the kept-back figure.";
+  else verdict = "It held up on the part it never saw, which is the best sign a backtest can give.";
+  const hind = ho.hindsight && ho.hindsight.values.join() !== b.values.join() ? ` The combination that did best on the kept-back part alone was ${label(ho.hindsight.values)} (${signed(ho.hindsight.holdout_return_pct, "%")}), but you could only know that with hindsight.` : "";
+  return h("div", { class: "walk holdout" }, h("h3", {}, "Kept-back check", infoTip("The last part of the period was not used for ranking. The winner's result there is the closest thing a backtest has to a fresh test.")),
+    h("p", {}, `From ${day(ho.from)} to ${day(ho.to)} (the last ${ho.pct}%), the winner made `,
+      h("strong", { class: b.holdout_return_pct >= 0 ? "gain" : "loss" }, signed(b.holdout_return_pct, "%")),
+      ` over ${b.holdout_trades} trade${b.holdout_trades === 1 ? "" : "s"}, against ${signed(b.train_return_pct, "%")} on the part it was ranked on. ${verdict}${hind}`));
+}
+
+/** Walk-forward over the whole grid: the combination picked before each stretch and how it did. */
+function renderWalkForwardGrid(wf, label) {
+  const tip = infoTip("Splits the period into stretches. Before each stretch it picks the combination that scored best on all the data so far, then records how it did on the stretch. Every choice only uses the past, like tuning for real would.");
+  if (wf.skipped) return h("div", { class: "walk" }, h("h3", {}, "Walk-forward check", tip), h("p", { class: "muted small" }, wf.skipped));
+  const gap = wf.hindsight_pct - wf.walk_forward_pct;
+  let verdict = "Tuning as you went would have done about as well as picking the best combination with hindsight: the settings are not very sensitive to when you choose them.";
+  if (wf.walk_forward_pct <= 0) verdict = "Tuning as you went would have lost money, so the good results above depend on knowing the best combination in advance.";
+  else if (gap > Math.max(5, Math.abs(wf.hindsight_pct) * 0.5)) verdict = "Much of the best combination's result came from hindsight. Expect live results closer to the walk-forward figure.";
+  return h("div", { class: "walk" }, h("h3", {}, "Walk-forward check", tip),
+    h("p", {}, `From ${day(wf.from)} to ${day(wf.to)}, re-picking the best combination before each of ${wf.folds} stretches would have made `,
+      h("strong", { class: wf.walk_forward_pct >= 0 ? "gain" : "loss" }, signed(wf.walk_forward_pct, "%")),
+      `. Picking the single best combination with hindsight (${label(wf.hindsight_values)}) made ${signed(wf.hindsight_pct, "%")}; the average combination made ${signed(wf.average_pct, "%")}. ${verdict}`),
+    h("div", { class: "table-wrap" }, h("table", { class: "trades sweep-table" },
+      h("thead", {}, h("tr", {}, h("th", {}, "Stretch"), h("th", {}, "Picked using data up to"), h("th", {}, "Combination"), h("th", { class: "num" }, "Result on the stretch"), h("th", { class: "num" }, "Trades"))),
+      h("tbody", {}, wf.windows.map((w, i) => h("tr", {}, h("td", {}, String(i + 1)), h("td", {}, day(w.train_to)),
+        h("td", {}, w.values ? label(w.values) : h("span", { class: "muted" }, "nothing had traded yet")),
+        h("td", { class: "num " + (w.test_return_pct >= 0 ? "gain" : "loss") }, signed(w.test_return_pct, "%")), h("td", { class: "num" }, String(w.test_trades))))))));
 }
 
 /** Best score for each pair of values of the first two settings (the best over any third setting). */
