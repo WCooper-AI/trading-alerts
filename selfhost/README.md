@@ -1,4 +1,4 @@
-# Trading Alerts (self-hosted)
+# Altius (self-hosted)
 
 Backtesting, forward testing and phone alerts for **trading rules you write yourself**,
 running on your own computer or server.
@@ -36,7 +36,7 @@ what you'd like to do:
 Your strategies, settings and results live in a `TradingAlerts` folder in your home folder
 (the desktop app keeps its own; move between them with Settings, Backup).
 
-Forward tests and alerts only run while Trading Alerts is running. A computer that sleeps
+Forward tests and alerts only run while Altius is running. A computer that sleeps
 can't send alerts, so for alerts around the clock use choice 2 on an always-on machine, or
 Docker on a server.
 

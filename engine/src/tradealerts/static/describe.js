@@ -180,7 +180,7 @@ function renderParts(parts, cls = "sentence") {
 /** Export, copy a share link. The link carries the rules only, never results or account details. */
 function shareButtons(id, getData) {
   const fileBtn = h("a", { class: "button quiet", href: `/api/strategies/${encodeURIComponent(id)}/export`, download: "" , title: "Download the rules as a file" }, "Export");
-  const linkBtn = h("button", { type: "button", class: "quiet", title: "Copy a link that imports these rules into someone's Trading Alerts", onclick: async () => {
+  const linkBtn = h("button", { type: "button", class: "quiet", title: "Copy a link that imports these rules into someone's Altius", onclick: async () => {
     const d = clone(getData());
     delete d.enabled; d.template = true;
     const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(d)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");

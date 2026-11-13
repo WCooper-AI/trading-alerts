@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Trading Alerts",
+  "productName": "Altius",
   "version": "0.3.3",
   "identifier": "uk.william-cooper.tradealerts",
   "build": {

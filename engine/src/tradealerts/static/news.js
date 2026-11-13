@@ -149,7 +149,7 @@ async function viewNews() {
           e.previous ? [h("dt", {}, "Previous"), h("dd", {}, e.previous)] : null)),
       h("div", { class: "news-mine" },
         h("div", { class: "field" }, h("label", {}, "Your note"), note),
-        h("div", { class: "field" }, h("label", {}, "Phone reminder", infoTip("Sent through your alert settings (ntfy, Discord or webhook) while Trading Alerts is running.")), remind),
+        h("div", { class: "field" }, h("label", {}, "Phone reminder", infoTip("Sent through your alert settings (ntfy, Discord or webhook) while Altius is running.")), remind),
         e.alerted_at ? h("p", { class: "small muted" }, `Reminder sent ${when(e.alerted_at)}.`) : null,
         status));
   }

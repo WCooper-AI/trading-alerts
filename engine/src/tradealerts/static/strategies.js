@@ -23,7 +23,7 @@ function createMenu({ big = false, label = "Create strategy" } = {}) {
   const items = [
     ["Guided setup", "Pick a market and an idea, then fill in the blanks. Recommended.", () => { location.hash = "#/create"; }],
     ["Build from scratch", "Every rule by hand in the full editor.", () => { location.hash = "#/new"; }],
-    ["Import a file", "A strategy file someone exported from Trading Alerts.", () => file.click()],
+    ["Import a file", "A strategy file someone exported from Altius.", () => file.click()],
   ];
   const menu = h("div", { class: "menu", role: "menu", hidden: true });
   const btn = h("button", { type: "button", class: "primary" + (big ? " big" : ""), "aria-haspopup": "menu", "aria-expanded": "false" },

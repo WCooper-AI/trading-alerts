@@ -434,7 +434,7 @@ function accountSection() {
   if (isHosted() && window.cloudAccount) return window.cloudAccount.settingsSection();
   if (!app.session.auth_required) return null;
   return h("section", { class: "section" }, h("h2", {}, "Signing in"),
-    h("p", { class: "section-note" }, "This copy of Trading Alerts is protected by the password in TRADEALERTS_PASSWORD. Changing it signs everyone out."),
+    h("p", { class: "section-note" }, "This copy of Altius is protected by the password in TRADEALERTS_PASSWORD. Changing it signs everyone out."),
     h("div", { class: "inline" }, h("button", { type: "button", onclick: signOut }, "Sign out")));
 }
 

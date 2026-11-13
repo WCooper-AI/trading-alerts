@@ -964,7 +964,7 @@ function testStamp(meta, sym) {
     ["Overnight funding", meta.funding_pct ? `${short(meta.funding_pct)}% a year` : "None"],
     ["Slippage per fill", [meta.slippage ? `${short(meta.slippage)} price points` : "", meta.slippage_pct ? `${short(meta.slippage_pct)}% of price` : ""]
       .filter(Boolean).join(" + ") || "None"],
-    ["Tested", `${when(meta.tested_at)}, Trading Alerts ${meta.engine_version}`],
+    ["Tested", `${when(meta.tested_at)}, Altius ${meta.engine_version}`],
   ];
   return h("details", { class: "chart stamp" }, h("summary", {}, "How this was tested"),
     h("dl", { class: "metrics" }, rows.map(([k, v]) => [h("dt", {}, k), h("dd", {}, v)])));

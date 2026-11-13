@@ -1,12 +1,12 @@
-# Trading Alerts
+# Altius
 
 **Backtest, forward-test and get phone alerts for trading rules you write yourself.**
 Runs on your own computer or server. Open source under the [GNU AGPL-3.0](LICENSE).
 It never places trades, and it doesn't sell signals.
 
-![Trading Alerts dashboard, candle chart with trade markers and a phone alert](docs/img/hero.svg)
+![Altius dashboard, candle chart with trade markers and a phone alert](docs/img/hero.svg)
 
-> **Not financial advice.** Trading Alerts follows rules you set. It doesn't recommend trades.
+> **Not financial advice.** Altius follows rules you set. It doesn't recommend trades.
 > Backtests are simulations, and leveraged products such as CFDs and spread bets carry a high risk of
 > losing money. See [engine/DISCLAIMER.md](engine/DISCLAIMER.md).
 
@@ -45,7 +45,7 @@ Your data stays on your machine as SQLite and YAML. The browser makes no outside
 
 ## Don't want to keep a computer on 24/7?
 
-Forward tests and alerts only run while Trading Alerts is running. The **hosted edition**
+Forward tests and alerts only run while Altius is running. The **hosted edition**
 runs them on an always-on server, in your browser on Windows, macOS and phones or in the
 Linux desktop app. **£9/month, 7-day free trial.**
 → [trading.william-cooper.uk](https://trading.william-cooper.uk/?utm_source=github&utm_medium=readme&utm_campaign=launch)

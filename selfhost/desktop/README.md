@@ -1,4 +1,4 @@
-# Trading Alerts desktop app
+# Altius desktop app
 
 A [Tauri 2](https://tauri.app) shell around the Python engine. The window shows the
 same interface as `tradealerts serve`; the engine runs in the background on

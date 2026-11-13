@@ -18,7 +18,7 @@ function showLogin() {
     try { await POST("/login", { password: pw.value }); boot(); }
     catch (err) { msg.textContent = err.message; pw.select(); }
   });
-  clear($main).appendChild(h("div", { class: "login" }, h("h1", {}, "Trading Alerts"),
+  clear($main).appendChild(h("div", { class: "login" }, h("h1", {}, "Altius"),
     h("p", { class: "muted" }, "Sign in to manage your strategies."), form));
   pw.focus();
 }
@@ -252,7 +252,7 @@ async function boot() {
     [app.meta, app.recipes] = await Promise.all([GET("/meta"), GET("/recipes")]);
   } catch (e) {
     if (e instanceof ApiError && e.message === "Sign in to continue") return;
-    const msg = e instanceof ApiError ? e.message : "Can't reach the Trading Alerts server. Is it still running?";
+    const msg = e instanceof ApiError ? e.message : "Can't reach the Altius server. Is it still running?";
     clear($main).appendChild(h("p", { class: "error-box" }, msg));
     return;
   }
