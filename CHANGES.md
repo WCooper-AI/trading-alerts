@@ -1,4 +1,6 @@
-# Changes in 0.3.1 (reliability patch)
+# Changes in 0.3.1
+
+## Maths fixes
 
 - **RSI and ATR use exact Wilder smoothing.** The first value is the average of the first
   `period` values, then Wilder's recursion, matching TradingView and TA-Lib (checked against
@@ -13,6 +15,39 @@
 - Spreads that are negative or infinite are rejected; crossed broker quotes count as 0.
 - Strategy numbers must be finite (`.nan` / `.inf` rejected), and whole-number fields no
   longer accept `true`.
+
+## Statistical robustness
+
+- **Small-sample warning.** Backtests with few trades show a badge saying the figures rest on
+  too few trades to trust (`sample_warning` in the metrics).
+- **Sharpe 95% range.** The yearly Sharpe ratio comes with a 95% confidence interval
+  (`sharpe_ci`), worked out from the spread of trade returns.
+- **Slippage.** `costs.slippage` (price units) or `costs.slippage_pct` is charged on every
+  market fill (entries, stops and rule exits, not limit targets). Trades get `slippage_cost`
+  and the metrics `total_slippage`.
+
+## Desktop app and testing
+
+- **Port handshake.** The engine binds its own socket and prints `TRADEALERTS_PORT=<n>`; the
+  desktop app reads it, so a busy port no longer leaves a blank window (`--port 0` works too).
+- CI runs the tests on Python 3.10, 3.11, 3.12 and 3.13, with a separate `ruff` lint job.
+
+## Backups, sign-in and data checks
+
+- **Shareable backups.** Settings, Backup now offers a full backup (private, includes tokens)
+  and a shareable one (`/api/backup?redact=true`) that blanks passwords, API tokens, webhook
+  addresses and ntfy topics, switches off the alerts that lost them, and leaves out the
+  sign-in log. Its `config.yaml` starts with a comment saying what was removed.
+- **Sign-in slow-down survives a restart.** Wrong-password counts and lockouts are kept in
+  `state.db` (`login_attempts`), so restarting the server no longer resets them. Addresses
+  that haven't tried for a day and aren't locked out are forgotten.
+- **Train / test split for backtests.** Pick 60/40, 70/30 or 80/20 next to Run backtest
+  (`split_pct` in `/api/backtest`). The first part is tested as usual (`metrics`), then the
+  rest is traded again from a fresh balance (`oos_metrics`, `oos_equity`, `split_date`), with
+  indicators already warmed up. The result shows both parts side by side.
+- **More data checks.** The price data warning strip now also reports the total weekday
+  candles missing when there are several gaps (`missing_bars`), and timestamps that go
+  backwards or repeat (`disordered`).
 
 # Changes in 0.2
 

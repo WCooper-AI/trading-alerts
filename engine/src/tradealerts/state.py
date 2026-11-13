@@ -7,6 +7,16 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Wrong sign-in passwords per address, so a restart doesn't reset the slow-down (see web.auth).
+LOGIN_ATTEMPTS = """
+CREATE TABLE IF NOT EXISTS login_attempts (
+    ip TEXT PRIMARY KEY,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    locked_until REAL NOT NULL DEFAULT 0,
+    last_attempt REAL NOT NULL DEFAULT 0
+);
+"""
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS strategy_state (
     strategy_id TEXT PRIMARY KEY,
@@ -117,7 +127,7 @@ CREATE TABLE IF NOT EXISTS settings_kv (
 );
 CREATE INDEX IF NOT EXISTS idx_runs_strategy ON runs (strategy_id, stopped_at);
 CREATE INDEX IF NOT EXISTS idx_trades_run ON paper_trades (run_id);
-"""
+""" + LOGIN_ATTEMPTS
 
 TRADE_COLS = [
     "direction", "signal_time", "entry_time", "entry_price", "exit_time", "exit_price", "size",

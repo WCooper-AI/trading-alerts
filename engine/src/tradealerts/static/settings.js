@@ -237,9 +237,13 @@ function backupSection() {
   return h("section", { class: "section" }, h("h2", {}, "Backup"),
     h("p", { class: "section-note" }, "Everything in one file: settings, strategies, forward tests, journal, price alerts and news notes. " +
       (isHosted() ? "Use it to keep your own copy, or to move to or from the self-hosted version." : "Use it to move between the desktop app and a server, or before trying something risky.")),
-    h("div", { class: "inline" }, h("a", { class: "button", href: "/api/backup", download: "" }, "Download backup"), file,
+    h("div", { class: "inline" },
+      h("a", { class: "button", href: "/api/backup", download: "" }, "Full backup (private)"),
+      h("a", { class: "button", href: "/api/backup?redact=true", download: "" }, "Shareable backup"), file,
       h("button", { type: "button", onclick: () => file.click() }, "Restore from a backup…")),
-    h("p", { class: "after-note" }, "The backup includes your alert and API tokens, so keep it somewhere private."), status);
+    h("p", { class: "after-note" }, "The full backup includes your alert and API tokens, so keep it somewhere private. " +
+      "The shareable backup leaves out passwords, API tokens, webhook addresses and ntfy topics; after restoring it, " +
+      "add them again here and switch the alerts back on."), status);
 }
 
 async function viewSettings() {

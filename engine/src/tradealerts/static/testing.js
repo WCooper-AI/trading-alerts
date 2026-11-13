@@ -133,14 +133,20 @@ function analysisPanel({ getData, render, intro, settings, apply, runLabel = "Ru
     btRun.disabled = true;
     clear(btOut).appendChild(h("p", { class: "loading" }, "Loading prices and testing your rules. Longer periods take longer the first time…"));
     try {
-      const res = await POST("/backtest", { data, strategy_id: strategyId, ...period.value() });
+      const body = { data, strategy_id: strategyId, ...period.value() };
+      if (split) body.split_pct = split;
+      const res = await POST("/backtest", body);
       savePref("ta-did-backtest", "1");
       clear(btOut).appendChild(render(res));
       btRun.textContent = "Test again";
     } catch (e) { clear(btOut).appendChild(h("p", { class: "error-box" }, e.message)); }
     finally { btRun.disabled = false; }
   });
-  const backtestPane = h("section", { class: "section" }, h("div", { class: "tool-actions" }, btRun), btOut);
+  let split = Number(pref("ta-bt-split", "0")) || 0;
+  const splitPick = h("select", { "aria-label": "Train / test split" }, SPLIT_OPTIONS.map(([v, label]) => h("option", { value: String(v), selected: v === split ? "" : null }, label)));
+  splitPick.addEventListener("change", () => { split = Number(splitPick.value); savePref("ta-bt-split", String(split)); });
+  const backtestPane = h("section", { class: "section" }, h("div", { class: "tool-actions with-field" }, btRun,
+    h("div", { class: "field" }, h("label", {}, "Train / test split", infoTip("Tests the first part of the period as usual, then trades the last part again from a fresh balance. Rules tuned on the first part that do much worse on the last part may be fitted to the past.")), splitPick)), btOut);
 
   // --- compare settings
   let list = [];
@@ -252,6 +258,7 @@ function analysisPanel({ getData, render, intro, settings, apply, runLabel = "Ru
 /** Optimiser: every combination of up to three settings, run in the background with progress and a Stop button. */
 const MAX_OPT_SETTINGS = 3;
 const SCORE_OPTIONS = [["return", "Return"], ["return_dd", "Return ÷ worst drop"], ["profit_factor", "Profit factor"], ["sharpe", "Steadiness (Sharpe)"]];
+const SPLIT_OPTIONS = [[0, "Off: test the whole period"], [60, "60% in-sample / 40% out-of-sample"], [70, "70% in-sample / 30% out-of-sample"], [80, "80% in-sample / 20% out-of-sample"]];
 const HOLDOUT_OPTIONS = [[0, "Nothing: rank on the whole period"], [20, "The last 20% of the period"], [30, "The last 30% of the period"], [40, "The last 40% of the period"], [50, "The last half of the period"]];
 const FOLD_OPTIONS = [[0, "Off"], [3, "3 stretches"], [4, "4 stretches"], [5, "5 stretches"], [6, "6 stretches"]];
 function comboCap() { return typeof isHosted === "function" && isHosted() ? 200 : 2000; }
@@ -698,6 +705,35 @@ function randomStrip(r) {
     h("span", { class: "readout" }, `Random median ${signed(r.median, "%")}`)), s);
 }
 
+/** In-sample vs out-of-sample figures from a backtest run with a train / test split. */
+function renderSplit(res, sym) {
+  const a = res.metrics, b = res.oos_metrics;
+  const pct = (v, d = 1) => (v === null || v === undefined ? "–" : num(v, d) + "%");
+  const lines = [
+    ["Period", `${day(a.start)} to ${day(a.end)}`, `${day(b.start)} to ${day(b.end)}`],
+    ["Return", signed(a.total_return_pct, "%"), signed(b.total_return_pct, "%"), "total_return_pct"],
+    ["Sharpe (yearly)", num(a.sharpe), num(b.sharpe)],
+    ["Worst drawdown", pct(a.max_drawdown_pct), pct(b.max_drawdown_pct)],
+    ["Won", a.trades ? pct(a.win_rate_pct, 0) : "–", b.trades ? pct(b.win_rate_pct, 0) : "–"],
+    ["Trades", String(a.trades), String(b.trades)],
+  ];
+  const tone = (v) => (v === null || v === undefined ? "" : v >= 0 ? "gain" : "loss");
+  const table = h("table", { class: "split-table" },
+    h("thead", {}, h("tr", {}, h("th", {}, ""), h("th", { class: "num" }, `In-sample (${num(a.split_pct, 0)}%)`), h("th", { class: "num" }, `Out-of-sample (${num(100 - a.split_pct, 0)}%)`))),
+    h("tbody", {}, lines.map(([k, x, y, key]) => h("tr", {}, h("th", { scope: "row" }, k),
+      h("td", { class: "num " + (key ? tone(a[key]) : "") }, x), h("td", { class: "num " + (key ? tone(b[key]) : "") }, y)))));
+  const gap = a.total_return_pct - b.total_return_pct;
+  let note = `Out-of-sample starts ${day(res.split_date)} with a fresh balance of ${money(b.start_equity, sym)}. The rest of this page shows the in-sample part only.`;
+  if (!b.trades) note += " No trades were made out-of-sample.";
+  else if (b.total_return_pct < a.total_return_pct) note += ` The out-of-sample return is ${num(gap, 1)} percentage points lower than in-sample.`;
+  const box = h("div", { class: "walk split" }, h("h3", {}, "In-sample vs out-of-sample",
+    infoTip("The in-sample part is what you would tune your rules on. The out-of-sample part was not looked at while doing that, so it is closer to how the rules do on prices they haven't seen.")),
+    table, h("p", { class: "small" }, note));
+  if (res.oos_equity && res.oos_equity.length)
+    box.appendChild(lineChart(res.oos_equity, { title: "Balance, out-of-sample part", fmt: (v) => money(v, sym), baseline: b.start_equity }));
+  return box;
+}
+
 function renderBacktest(res) {
   const m = res.metrics;
   const sym = res.currency;
@@ -733,6 +769,7 @@ function renderBacktest(res) {
     ...(m.total_slippage ? [["Slippage paid", money(m.total_slippage, sym)]] : []),
     ["Stop or target first?", m.used_finer_candles ? "Checked with finer candles" : "Stop assumed first"],
   );
+  if (res.oos_metrics) box.appendChild(renderSplit(res, sym));
   append(box, [h("dl", { class: "metrics" }, rows.map(([k, v]) => [h("dt", {}, k), h("dd", {}, v)]))]);
   append(box, [h("ul", { class: "warnings" }, res.warnings.map((w) => h("li", {}, w)))]);
   if (res.why_no_trades) box.appendChild(renderWhyNoTrades(res.why_no_trades));

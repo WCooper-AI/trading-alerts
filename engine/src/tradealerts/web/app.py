@@ -137,7 +137,7 @@ def create_app(config_path: str | Path | None = None, password: str | None = Non
     for sid in ws.migrate():
         log.info("%s: updated to follow Settings, Price data", sid)
     news.set_data_dir(c.data_dir)
-    auth = Auth(password, c.data_dir / ".session_secret")
+    auth = Auth(password, c.data_dir / ".session_secret", db_path=c.state_db)
     ctx = SelfHostContext(ws, auth, runner=runner, desktop=desktop)
 
     def authorize(request: Request):

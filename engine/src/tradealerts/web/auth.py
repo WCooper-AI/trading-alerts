@@ -7,13 +7,16 @@ import hmac
 import math
 import os
 import secrets
+import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 
+from ..state import LOGIN_ATTEMPTS
 from .common import err
 
 COOKIE = "ta_session"
@@ -21,38 +24,92 @@ SESSION_DAYS = 7
 
 
 class LoginThrottle:
-    """Slows down repeated wrong passwords from one address (or for one account)."""
+    """Slows down repeated wrong passwords from one address (or for one account).
+
+    With ``db_path`` the counts live in state.db's ``login_attempts`` table, so restarting
+    the server (or a second process on the same database) doesn't reset them.
+    """
 
     MAX_TRACKED = 10_000
+    FORGET_AFTER = 86_400.0  # a day after the last wrong password, start counting from zero
+    CLEAN_EVERY = 3_600.0
 
-    def __init__(self, free_tries: int = 5):
+    def __init__(self, free_tries: int = 5, db_path: str | Path | None = None):
         self.free = free_tries
         self._failures: dict[str, tuple[int, float]] = {}
         self._lock = threading.Lock()
+        self.db_path = Path(db_path) if db_path else None
+        self._cleaned = 0.0
+        if self.db_path:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._db() as db:
+                db.executescript(LOGIN_ATTEMPTS)
+            self.cleanup()
+
+    @contextmanager
+    def _db(self):
+        db = sqlite3.connect(self.db_path, timeout=15)
+        try:
+            with db:  # commits
+                yield db
+        finally:
+            db.close()
+
+    def _wait(self, count: int) -> float:
+        return 0.0 if count < self.free else min(900.0, 30.0 * 2 ** (count - self.free))
 
     def locked_for(self, key: str) -> float:
-        count, until = self._failures.get(key, (0, 0.0))
+        if self.db_path:
+            with self._db() as db:
+                row = db.execute("SELECT locked_until FROM login_attempts WHERE ip = ?", (key,)).fetchone()
+            until = row[0] if row else 0.0
+        else:
+            count, until = self._failures.get(key, (0, 0.0))
         return max(0.0, until - time.time())
 
     def failed(self, key: str) -> None:
+        now = time.time()
         with self._lock:
+            if self.db_path:
+                if now - self._cleaned > self.CLEAN_EVERY:
+                    self.cleanup(now)
+                with self._db() as db:
+                    row = db.execute("SELECT attempts FROM login_attempts WHERE ip = ?", (key,)).fetchone()
+                    count = (row[0] if row else 0) + 1
+                    db.execute("INSERT INTO login_attempts (ip, attempts, locked_until, last_attempt) "
+                               "VALUES (?, ?, ?, ?) ON CONFLICT(ip) DO UPDATE SET attempts = excluded.attempts, "
+                               "locked_until = excluded.locked_until, last_attempt = excluded.last_attempt",
+                               (key, count, now + self._wait(count), now))
+                return
             if len(self._failures) > self.MAX_TRACKED:  # don't grow without limit under attack
-                now = time.time()
                 self._failures = {k: v for k, v in self._failures.items() if v[1] > now}
             count, _ = self._failures.get(key, (0, 0.0))
             count += 1
-            lock = 0.0 if count < self.free else min(900.0, 30.0 * 2 ** (count - self.free))
-            self._failures[key] = (count, time.time() + lock)
+            self._failures[key] = (count, now + self._wait(count))
 
     def ok(self, key: str) -> None:
         with self._lock:
+            if self.db_path:
+                with self._db() as db:
+                    db.execute("DELETE FROM login_attempts WHERE ip = ?", (key,))
+                return
             self._failures.pop(key, None)
+
+    def cleanup(self, now: float | None = None) -> int:
+        """Forget addresses that are no longer locked out and haven't tried for a day."""
+        if not self.db_path:
+            return 0
+        now = time.time() if now is None else now
+        self._cleaned = now
+        with self._db() as db:
+            return db.execute("DELETE FROM login_attempts WHERE locked_until < ? AND last_attempt < ?",
+                              (now, now - self.FORGET_AFTER)).rowcount
 
 
 class Auth:
-    def __init__(self, password: str | None, secret_file: Path):
+    def __init__(self, password: str | None, secret_file: Path, db_path: Path | None = None):
         self.password = password or None
-        self.throttle = LoginThrottle()
+        self.throttle = LoginThrottle(db_path=db_path if self.password else None)
         if self.password:
             secret_file.parent.mkdir(parents=True, exist_ok=True)
             if not secret_file.exists():

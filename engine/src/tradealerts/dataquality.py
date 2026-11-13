@@ -1,9 +1,9 @@
 """Data quality: is the price history good enough to trust what's drawn on it?
 
 `check(df, timeframe)` looks at a bar frame and returns plain-English warnings about
-gaps (missing candles), a stale last bar (the feed stopped), and zero-volume or
-flat candles (the feed filled in a price without any trading behind it). It never
-raises: bad input just means no warnings.
+gaps (missing candles), timestamps out of order, a stale last bar (the feed stopped),
+and zero-volume or flat candles (the feed filled in a price without any trading behind
+it). It never raises: bad input just means no warnings.
 """
 
 from __future__ import annotations
@@ -18,6 +18,8 @@ GAP_BARS = 3
 STALE_BARS = 3
 # a run of zero-volume (or flat) candles at least this long is reported
 ZERO_RUN = 5
+# above this many candles in one gap, estimate its weekday share instead of listing every candle
+EXACT_LIMIT = 50_000
 
 
 def _utc(t) -> pd.Timestamp:
@@ -33,6 +35,17 @@ def _spans_weekend(a: pd.Timestamp, b: pd.Timestamp) -> bool:
     return any(d.weekday() == 5 for d in pd.date_range(a.normalize(), b.normalize(), freq="D"))
 
 
+def _weekday_candles(a: pd.Timestamp, b: pd.Timestamp, bar: pd.Timedelta) -> int:
+    """Candles that should sit strictly between a and b on weekdays (Saturdays and Sundays skipped)."""
+    n = int((b - a) / bar) - 1
+    if n <= 0:
+        return 0
+    if n > EXACT_LIMIT:
+        return int(n * 5 / 7)
+    stamps = pd.date_range(a + bar, periods=n, freq=bar)
+    return int((stamps.day_of_week < 5).sum())
+
+
 def _fmt(t: pd.Timestamp) -> str:
     return f"{t:%a %d %b %H:%M}"
 
@@ -42,7 +55,9 @@ def check(df: pd.DataFrame, timeframe: str, now=None) -> list[dict]:
 
     kinds: "gap" (missing candles, weekends ignored), "stale" (last bar well behind now),
     "zero_volume" (a run of candles with no volume, or no price movement when there's no volume column),
-    "repaired" (candles with impossible high/low values that were widened when loaded).
+    "repaired" (candles with impossible high/low values that were widened when loaded),
+    "missing_bars" (total weekday candles missing across several gaps, with ``gaps`` and ``largest_at``),
+    "disordered" (timestamps that go backwards or repeat; checked after sorting them).
     """
     out: list[dict] = []
     if df is None or len(df) < 2 or not isinstance(df.index, pd.DatetimeIndex):
@@ -53,6 +68,12 @@ def check(df: pd.DataFrame, timeframe: str, now=None) -> list[dict]:
         return out
     idx = df.index
     idx = idx.tz_localize("UTC") if idx.tz is None else idx.tz_convert("UTC")
+    steps = idx[1:] - idx[:-1]
+    back = int((steps <= pd.Timedelta(0)).sum())  # earlier than, or the same as, the candle before
+    if back:
+        out.append({"kind": "disordered", "count": back,
+                    "text": (f"{back} candle{'s' if back != 1 else ''} came out of time order or repeated an "
+                             "earlier time. They were put in order, but the source data may be mixed up there.")})
     if not idx.is_monotonic_increasing:
         order = idx.argsort()
         idx, df = idx[order], df.iloc[order]
@@ -67,6 +88,21 @@ def check(df: pd.DataFrame, timeframe: str, now=None) -> list[dict]:
                     "text": (f"{len(gaps)} gap{'s' if len(gaps) != 1 else ''} in the prices, the widest "
                              f"about {missing} candles ({_fmt(a)} to {_fmt(b)} UTC). "
                              "Rules that look back over those candles may have missed or invented signals.")})
+    # Weekday candles missing. Holes next to a weekend count too when more than GAP_BARS weekday
+    # candles are gone (a market shut from Friday evening loses a few). One gap already reported
+    # above is described in full there, so this adds the total when there are several.
+    holes = []
+    for b, d in diffs[diffs > GAP_BARS * bar].items():
+        a = b - d
+        n = _weekday_candles(a, b, bar)
+        if n > (0 if (a, b) in gaps else GAP_BARS):
+            holes.append((a, b, n))
+    if len(holes) > 1 or (holes and not gaps):
+        total = sum(g[2] for g in holes)
+        a, b, worst = max(holes, key=lambda g: g[2])
+        out.append({"kind": "missing_bars", "count": total, "gaps": len(holes), "largest_at": a.isoformat(),
+                    "text": (f"About {total} weekday candles are missing across {len(holes)} gaps; the largest "
+                             f"({worst} candles) starts {_fmt(a)} UTC. Results over those dates rest on less data than they seem.")})
 
     # stale last bar
     now = pd.Timestamp.now(tz="UTC") if now is None else _utc(now)

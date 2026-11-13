@@ -8,6 +8,7 @@ import os
 from fastapi import APIRouter, Body, Depends, Request
 
 from ... import __version__, analysis, compute, versions
+from ...backtest import MAX_SPLIT_PCT, MIN_SPLIT_PCT
 from ...jobs import Busy
 from ...recipes import RecipeError, build_strategy
 from ...strategy import ID_RE, read_raw, strategy_from_dict
@@ -33,8 +34,13 @@ def _run(request: Request, ws: Workspace, fn, *args):
 @router.post("/api/backtest")
 def backtest(request: Request, body: dict = Body(...), ws: Workspace = Depends(workspace)):
     s = validate(ws, body.get("data"))
+    split = body.get("split_pct")
+    if split is not None and (isinstance(split, bool) or not isinstance(split, (int, float))
+                              or not MIN_SPLIT_PCT <= split <= MAX_SPLIT_PCT):
+        err(422, f"split_pct must be a number from {MIN_SPLIT_PCT} to {MAX_SPLIT_PCT}")
     df, fine, test_start, notes = load_period(ctx_of(request), ws, s, body)
-    out = _run(request, ws, compute.backtest, body["data"], df, fine, test_start, notes)
+    out = _run(request, ws, compute.backtest, body["data"], df, fine, test_start, notes,
+               None if split is None else float(split))
     out["meta"] = stamp(ws, s, body, out["metrics"])
     return out
 

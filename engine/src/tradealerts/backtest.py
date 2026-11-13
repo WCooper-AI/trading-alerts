@@ -21,6 +21,12 @@ class BacktestResult:
     metrics: dict
     skipped: list[Event] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # With a train/test split: trades, equity and metrics above are the in-sample part,
+    # these the out-of-sample part (a fresh account from ``split_date``).
+    oos_trades: pd.DataFrame | None = None
+    oos_equity: pd.Series | None = None
+    oos_metrics: dict | None = None
+    split_date: pd.Timestamp | None = None
 
 
 def fine_lookup(fine: pd.DataFrame | None, bar: pd.Timedelta):
@@ -55,31 +61,27 @@ def warmup_days(timeframe: str, candles: int = WARMUP_CANDLES) -> int:
     return max(30, int(span / pd.Timedelta(days=1)) + 1)
 
 
-def run_backtest(strategy: Strategy, df: pd.DataFrame, fine: pd.DataFrame | None = None,
-                 notes: list[str] | None = None, start: pd.Timestamp | None = None,
-                 ctx=None) -> BacktestResult:
-    """Simulate ``strategy`` over ``df``.
+MIN_SPLIT_PCT, MAX_SPLIT_PCT = 50, 90
 
-    With ``start``, candles before it are only used to warm up indicators; trading
-    and all results begin at ``start``.
-    """
-    if df.empty:
-        raise ValueError("No price data to backtest on")
-    bar = timeframes.to_timedelta(strategy.market.timeframe)
-    prepared = strategy.prepare(df, ctx)  # on the full history, so indicators are warmed up
-    first = 0
-    if start is not None:
-        first = int(np.searchsorted(df.index.as_unit("ns").asi8, pd.Timestamp(start).value, "left"))
-        if first >= len(df):
-            raise ValueError("No price data in the chosen period")
+
+def split_index(first: int, n: int, split_pct: float) -> int:
+    """Index of the first out-of-sample candle when the test period [first, n) is split."""
+    if isinstance(split_pct, bool) or not MIN_SPLIT_PCT <= split_pct <= MAX_SPLIT_PCT:
+        raise ValueError(f"The in-sample part must be {MIN_SPLIT_PCT}-{MAX_SPLIT_PCT}% of the period")
+    cut = first + int(round((n - first) * split_pct / 100))
+    if cut - first < 2 or n - cut < 2:
+        raise ValueError("The test period is too short to split into in-sample and out-of-sample parts")
+    return cut
+
+
+def _simulate(strategy: Strategy, df: pd.DataFrame, prepared, a: int, b: int, get_fine, spreads):
+    """One fresh account trading candles a..b-1; open trades are closed at the last one."""
     sim = Simulator(strategy)
-    get_fine = fine_lookup(fine, bar)
-    spreads = spreads_for(strategy, df)
     trades, skipped = [], []
-    equity = np.empty(len(df))
+    equity = np.empty(b - a)
     o, h, l, c = (df[k].to_numpy(dtype=float) for k in ("open", "high", "low", "close"))
     in_market = 0
-    for i in range(first, len(df)):
+    for i in range(a, b):
         t = df.index[i]
         events = sim.step(
             t, o[i], h[i], l[i], c[i],
@@ -95,18 +97,53 @@ def run_backtest(strategy: Strategy, df: pd.DataFrame, fine: pd.DataFrame | None
                 skipped.append(ev)
         if sim.position:
             in_market += 1
-        equity[i] = sim.state["equity"] + sim.unrealised(c[i])
-    for ev in sim.finish(df.index[-1], c[-1]):
+        equity[i - a] = sim.state["equity"] + sim.unrealised(c[i])
+    for ev in sim.finish(df.index[b - 1], c[b - 1]):
         trades.append(ev.data)
         equity[-1] = sim.state["equity"]
+    eq = pd.Series(equity, index=df.index[a:b], name="equity")
+    return pd.DataFrame(trades), skipped, eq, in_market
 
-    trades_df = pd.DataFrame(trades)
-    period = df.iloc[first:]
-    eq = pd.Series(equity[first:], index=period.index, name="equity")
+
+def run_backtest(strategy: Strategy, df: pd.DataFrame, fine: pd.DataFrame | None = None,
+                 notes: list[str] | None = None, start: pd.Timestamp | None = None,
+                 ctx=None, split_pct: float | None = None) -> BacktestResult:
+    """Simulate ``strategy`` over ``df``.
+
+    With ``start``, candles before it are only used to warm up indicators; trading
+    and all results begin at ``start``. With ``split_pct`` (50-90), the test period is
+    split in two: the first ``split_pct`` percent is the in-sample part (the result's
+    trades, equity and metrics) and the rest is traded again from a fresh account as the
+    out-of-sample part. Indicators are worked out once over the whole history, so the
+    out-of-sample part starts with them warmed up and nothing from after a candle is used.
+    """
+    if df.empty:
+        raise ValueError("No price data to backtest on")
+    bar = timeframes.to_timedelta(strategy.market.timeframe)
+    prepared = strategy.prepare(df, ctx)  # on the full history, so indicators are warmed up
+    first = 0
+    if start is not None:
+        first = int(np.searchsorted(df.index.as_unit("ns").asi8, pd.Timestamp(start).value, "left"))
+        if first >= len(df):
+            raise ValueError("No price data in the chosen period")
+    cut = len(df) if split_pct is None else split_index(first, len(df), split_pct)
+    get_fine = fine_lookup(fine, bar)
+    spreads = spreads_for(strategy, df)
+    trades_df, skipped, eq, in_market = _simulate(strategy, df, prepared, first, cut, get_fine, spreads)
+    period = df.iloc[first:cut]
     metrics = compute_metrics(strategy, trades_df, eq, period, in_market)
     metrics["warmup_candles"] = first
     metrics["used_data_spread"] = spreads is not None
     metrics["used_finer_candles"] = fine is not None and not fine.empty
+    split = {}
+    if split_pct is not None:
+        oos_trades, oos_skipped, oos_eq, oos_in = _simulate(strategy, df, prepared, cut, len(df), get_fine, spreads)
+        skipped += oos_skipped
+        oos_metrics = compute_metrics(strategy, oos_trades, oos_eq, df.iloc[cut:], oos_in)
+        split = {"oos_trades": oos_trades, "oos_equity": oos_eq, "oos_metrics": oos_metrics,
+                 "split_date": df.index[cut]}
+        metrics["split_pct"] = float(split_pct)
+        oos_metrics["split_pct"] = float(split_pct)
 
     all_notes = list(notes or [])
     need = strategy.lookback_candles
@@ -115,7 +152,7 @@ def run_backtest(strategy: Strategy, df: pd.DataFrame, fine: pd.DataFrame | None
             f"Your rules need {need} candles of history before they can be checked, but the price data "
             f"only has {first} before the test period, so trades may be missing near the start."
         )
-    jumps = find_jumps(period, strategy.market.timeframe)
+    jumps = find_jumps(df.iloc[first:], strategy.market.timeframe)
     if len(jumps):
         worst = jumps["gap"].idxmax()
         all_notes.append(
@@ -124,7 +161,7 @@ def run_backtest(strategy: Strategy, df: pd.DataFrame, fine: pd.DataFrame | None
             "data, so trades around those dates may not be realistic."
         )
     metrics["data_jumps"] = int(len(jumps))
-    return BacktestResult(strategy, trades_df, eq, metrics, skipped, all_notes)
+    return BacktestResult(strategy, trades_df, eq, metrics, skipped, all_notes, **split)
 
 
 def compute_metrics(strategy: Strategy, trades: pd.DataFrame, equity: pd.Series, df: pd.DataFrame, bars_in_market: int) -> dict:

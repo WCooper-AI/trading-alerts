@@ -127,9 +127,9 @@ def signal_marks(s, df: pd.DataFrame, limit: int) -> list:
 # --------------------------------------------------------------------------- jobs
 
 
-def backtest(data: dict, df, fine, test_start, notes: list[str]) -> dict:
+def backtest(data: dict, df, fine, test_start, notes: list[str], split_pct: float | None = None) -> dict:
     s = strategy(data)
-    res = run_backtest(s, df, fine, notes=notes, start=test_start)
+    res = run_backtest(s, df, fine, notes=notes, start=test_start, split_pct=split_pct)
     eq = res.equity
     dd = (eq / eq.cummax() - 1) * 100
     trades = res.trades.tail(2000).to_dict("records") if len(res.trades) else []
@@ -158,6 +158,11 @@ def backtest(data: dict, df, fine, test_start, notes: list[str]) -> dict:
     }
     if not len(res.trades):
         out["why_no_trades"] = analysis.why_no_trades(s, df, test_start)
+    if res.oos_metrics is not None:
+        out["oos_metrics"] = res.oos_metrics
+        out["oos_equity"] = _points(res.oos_equity)
+        out["oos_trade_count"] = len(res.oos_trades)
+        out["split_date"] = res.split_date.isoformat()
     return _clean(out)
 
 

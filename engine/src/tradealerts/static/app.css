@@ -418,6 +418,7 @@ select.to-fill:not(:focus) { color: var(--muted); }
 .period, .period-dates { align-items: flex-end; gap: .6rem; }
 .period .field label { display: block; }
 .tool-actions { display: flex; gap: .5rem; margin-bottom: 1rem; }
+.tool-actions.with-field { align-items: flex-end; flex-wrap: wrap; gap: 1rem; }
 .tool-intro { margin-bottom: 1rem; max-width: 60ch; }
 .range-box { margin-top: .8rem; }
 .range-fields { gap: .7rem; margin-bottom: .4rem; }
@@ -833,6 +834,11 @@ details[open] > :not(summary) { animation: rise .3s var(--ease) backwards; }
 .corr-neg { background: color-mix(in srgb, var(--gain) calc(var(--corr) * 30%), transparent); }
 .walk { display: grid; gap: .5rem; padding: 1rem; border-radius: var(--radius); background: var(--glass-thin); border: 1px solid var(--line-soft); }
 .walk h3 { display: flex; align-items: center; }
+.walk.split { margin: 0 0 1rem; }
+table.split-table { border-collapse: collapse; font-size: var(--step--1); white-space: nowrap; }
+table.split-table th, table.split-table td { padding: .3rem .6rem; border-bottom: 1px solid var(--line-soft); }
+table.split-table th { color: var(--muted); font-weight: 580; text-align: left; }
+table.split-table .num { text-align: right; }
 code { font-size: .85em; background: var(--glass-thin); padding: .1rem .35rem; border-radius: 6px; word-break: break-all; }
 @media (max-width: 1100px) {
   .live-layout, .portfolio-layout { grid-template-columns: minmax(0, 1fr); }

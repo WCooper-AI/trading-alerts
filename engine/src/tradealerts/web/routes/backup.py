@@ -29,17 +29,62 @@ MAX_UNPACKED = 600 * 1024 * 1024
 STRATEGY_NAME = re.compile(r"^strategies/[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.ya?ml$")
 README = "trading-alerts-backup.txt"
 
+# Settings that hold a password, API token or private address (any level of config.yaml).
+SECRET_KEYS = {"token", "password", "secret", "api_key", "webhook_url", "oanda_token", "headers"}
+# Notifier settings that are themselves the secret: a webhook's address, an ntfy topic.
+SECRET_NOTIFIER_KEYS = {"webhook": {"url"}, "ntfy": {"topic"}}
+ENV_ONLY = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
+REDACTED_NOTE = ("# Shareable copy: passwords, API tokens, webhook addresses and ntfy topics were removed.\n"
+                 "# Fill them in again in Settings after restoring.\n")
 
-def make_backup(ws: Workspace) -> bytes:
+
+def _blank(value):
+    if isinstance(value, str) and ENV_ONLY.match(value):
+        return value  # names a variable on the server, not the secret itself
+    return {} if isinstance(value, dict) else ""
+
+
+def redact_config(value):
+    """A copy of config.yaml's settings with passwords, tokens and private addresses blanked."""
+    if isinstance(value, list):
+        return [redact_config(v) for v in value]
+    if not isinstance(value, dict):
+        return value
+    extra = SECRET_NOTIFIER_KEYS.get(str(value.get("type", "")).lower(), set())
+    out, blanked = {}, False
+    for k, v in value.items():
+        key = str(k).lower()
+        if key in SECRET_KEYS or key in extra or key.endswith(("_token", "_password", "_secret")):
+            out[k] = _blank(v) if v not in (None, "") else v
+            blanked = blanked or out[k] != v
+        else:
+            out[k] = redact_config(v)
+    if blanked and "type" in value:
+        out["enabled"] = False  # a notifier without its token would only fail; switched on again in Settings
+    return out
+
+
+def make_backup(ws: Workspace, redact: bool = False) -> bytes:
     c = ws.config()
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr(README,
                    f"Trading Alerts {__version__} backup, made {pd.Timestamp.now(tz='UTC'):%Y-%m-%d %H:%M} UTC.\n"
-                   "Restore it from Settings, Backup. It contains your settings (including alert and API tokens), "
-                   "strategies, forward tests, journal, alerts and notes. Keep it private.\n")
+                   + ("Restore it from Settings, Backup. This is a shareable copy: passwords, API tokens and "
+                      "webhook addresses were removed. It still contains your strategies, forward tests, "
+                      "journal, alerts and notes.\n" if redact else
+                      "Restore it from Settings, Backup. It contains your settings (including alert and API tokens), "
+                      "strategies, forward tests, journal, alerts and notes. Keep it private.\n"))
         if ws.config_path.exists():
-            z.write(ws.config_path, "config.yaml")
+            if redact:
+                try:
+                    raw = yaml.safe_load(ws.config_path.read_text(encoding="utf-8")) or {}
+                except yaml.YAMLError:
+                    raw = {}  # never fall back to copying a file we couldn't clean
+                z.writestr("config.yaml", REDACTED_NOTE + yaml.safe_dump(redact_config(raw), sort_keys=False,
+                                                                         allow_unicode=True))
+            else:
+                z.write(ws.config_path, "config.yaml")
         for p in strategy_files(c.strategies_dir).values():
             z.write(p, f"strategies/{p.name}")
         if c.state_db.exists():
@@ -48,6 +93,10 @@ def make_backup(ws: Workspace) -> bytes:
                 src, dst = sqlite3.connect(c.state_db), sqlite3.connect(copy)
                 try:
                     src.backup(dst)  # consistent copy even while the checker is running
+                    if redact:
+                        dst.execute("DROP TABLE IF EXISTS login_attempts")  # sign-in addresses
+                        dst.commit()
+                        dst.execute("VACUUM")
                 finally:
                     dst.close()
                     src.close()
@@ -60,9 +109,10 @@ def make_backup(ws: Workspace) -> bytes:
 
 
 @router.get("/api/backup")
-def backup(ws: Workspace = Depends(workspace)):
-    name = f"trading-alerts-backup-{pd.Timestamp.now():%Y-%m-%d}.zip"
-    return Response(make_backup(ws), media_type="application/zip",
+def backup(redact: bool = False, ws: Workspace = Depends(workspace)):
+    kind = "shareable-backup" if redact else "backup"
+    name = f"trading-alerts-{kind}-{pd.Timestamp.now():%Y-%m-%d}.zip"
+    return Response(make_backup(ws, redact=redact), media_type="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
