@@ -187,8 +187,13 @@ def luck(data: dict, df, fine, test_start, notes: list[str]) -> dict:
     return _clean(out)
 
 
-def portfolio(parts: list[tuple], balance: float, currency: str, notes: list[str]) -> dict:
-    """parts: (id, name, strategy dict, candles, finer candles, test start)."""
+def portfolio(parts: list[tuple], balance: float, currency: str, notes: list[str], options: dict | None = None) -> dict:
+    """parts: (id, name, strategy dict, candles, finer candles, test start).
+
+    options: ``weighting`` (equal / inverse_vol / custom), ``weights`` ({id: share %} for custom),
+    ``shared`` (replay through one compounding account), ``max_open_trades``, ``max_open_risk_pct``.
+    """
+    options = options or {}
     results = []
     for sid, name, data, df, fine, start in parts:
         s = strategy(data)
@@ -198,12 +203,19 @@ def portfolio(parts: list[tuple], balance: float, currency: str, notes: list[str
             results.append((sid, name, run_backtest(s, df, fine, start=start)))
         except ValueError as exc:
             raise ValueError(f"{name}: {exc}") from None
-    out = analysis.portfolio(results, float(balance))
+    weighting = options.get("weighting") or "equal"
+    weights = analysis.portfolio_weights(weighting, results, options.get("weights"))
+    if options.get("shared"):
+        out = analysis.shared_account(results, float(balance), weights, options.get("max_open_trades"), options.get("max_open_risk_pct"))
+    else:
+        out = analysis.portfolio(results, float(balance), weights)
     return _clean({
         "metrics": out["metrics"], "per_strategy": out["per_strategy"], "correlation": out["correlation"],
         "equity": _points(out["equity"]), "drawdown": _points(out["drawdown"]),
         "open_risk": _points(out["open_risk"]), "currency": currency, "notes": notes,
-        "exposure": out["exposure"],
+        "exposure": out["exposure"], "skipped": out.get("skipped"),
+        "weighting": weighting, "weights": {sid: w * 100 for sid, w in weights.items()},
+        "shared": bool(options.get("shared")),
         "pnl_curves": {sid: _points(out["pnl_curves"][sid]) for sid in out["pnl_curves"].columns},
     })
 

@@ -11,24 +11,54 @@ async function viewPortfolio() {
   const ok = list.strategies.filter((x) => !x.error);
   const chosen = new Set(pref("ta-portfolio", "").split(",").filter((id) => ok.some((x) => x.id === id)));
   let balance = null;
+  const opts = { weighting: "equal", weights: {}, shared: false, max_open_trades: null, max_open_risk_pct: null };
   const out = h("div");
   const period = periodPicker({ custom: true });
   const run = h("button", { class: "primary", type: "button" }, "Test together");
+  const shareInputs = new Map();
+  const showShares = () => shareInputs.forEach((el, id) => { el.hidden = opts.weighting !== "custom" || !chosen.has(id); });
   const picks = h("div", { class: "pick-list" }, ok.map((x) => {
     const box = h("input", { type: "checkbox", checked: chosen.has(x.id), onchange: (e) => {
       if (e.target.checked) chosen.add(x.id); else chosen.delete(x.id);
       savePref("ta-portfolio", [...chosen].join(","));
+      showShares();
     } });
+    const share = h("span", { class: "share-input", hidden: true },
+      numberInput(null, (n) => { opts.weights[x.id] = n; }, { label: `Share of balance for ${x.data.name || x.id} (%)`, step: "any", min: "0", placeholder: "Share %" }), "%");
+    shareInputs.set(x.id, share);
     return h("label", { class: "pick" }, box, h("span", {}, h("strong", {}, x.data.name || x.id),
-      h("span", { class: "small muted" }, ` ${(x.data.market || {}).label || ""} · ${(x.data.market || {}).timeframe || ""}`)));
+      h("span", { class: "small muted" }, ` ${(x.data.market || {}).label || ""} · ${(x.data.market || {}).timeframe || ""}`)), share);
   }));
   const bal = numberInput(null, (n) => { balance = n; }, { label: "Shared starting balance", step: "any", min: "1", placeholder: "Amount" });
+  const weighting = h("select", { "aria-label": "How the balance is split", onchange: (e) => { opts.weighting = e.target.value; showShares(); } },
+    h("option", { value: "equal" }, "Equal: every strategy gets the same share"),
+    h("option", { value: "inverse_vol" }, "Steadier strategies get more"),
+    h("option", { value: "custom" }, "Set each share myself"));
+  const caps = h("div", { class: "bt-controls caps", hidden: true },
+    h("div", { class: "field" }, h("label", {}, "Most trades open at once", infoTip("A new trade is skipped while this many are already open across all the strategies. Leave blank for no limit.")),
+      numberInput(null, (n) => { opts.max_open_trades = n; }, { label: "Most trades open at once", step: "1", min: "1", integer: true, placeholder: "No limit", allowEmpty: true })),
+    h("div", { class: "field" }, h("label", {}, "Most at risk at once (% of balance)", infoTip("A new trade is skipped if it would take the total distance to the stops past this % of the balance at the time. Leave blank for no limit.")),
+      numberInput(null, (n) => { opts.max_open_risk_pct = n; }, { label: "Most at risk at once", step: "any", min: "0", placeholder: "No limit", allowEmpty: true })));
+  const sharedBox = h("input", { type: "checkbox", onchange: (e) => { opts.shared = e.target.checked; caps.hidden = !opts.shared; } });
+  showShares();
   run.addEventListener("click", async () => {
     if (chosen.size < 1) { toast("Tick at least one strategy", true); return; }
     if (isBlank(balance)) { toast("Fill in the starting balance", true); return; }
+    const body = { ids: [...chosen], balance, weighting: opts.weighting, shared: opts.shared, ...period.value() };
+    if (opts.weighting === "custom") {
+      body.weights = {};
+      for (const id of chosen) {
+        if (isBlank(opts.weights[id])) { toast("Fill in a share for every ticked strategy", true); return; }
+        body.weights[id] = opts.weights[id];
+      }
+    }
+    if (opts.shared) {
+      if (!isBlank(opts.max_open_trades)) body.max_open_trades = opts.max_open_trades;
+      if (!isBlank(opts.max_open_risk_pct)) body.max_open_risk_pct = opts.max_open_risk_pct;
+    }
     run.disabled = true;
     clear(out).appendChild(h("p", { class: "loading" }, `Backtesting ${chosen.size} strategies…`));
-    try { clear(out).appendChild(renderPortfolio(await POST("/portfolio", { ids: [...chosen], balance, ...period.value() }), ok)); }
+    try { clear(out).appendChild(renderPortfolio(await POST("/portfolio", body), ok)); }
     catch (e) { clear(out).appendChild(h("p", { class: "error-box" }, e.message)); }
     finally { run.disabled = false; }
   });
@@ -42,7 +72,14 @@ async function viewPortfolio() {
         h("section", { class: "section" }, h("div", { class: "bt-controls" },
           h("div", { class: "field" }, h("label", {}, "Shared starting balance",
             infoTip("Every strategy risks its own % per trade of this balance. Trades are sized from the starting balance (not compounded) so the strategies' results can simply be added together.")), bal),
-          period, run))),
+          h("div", { class: "field" }, h("label", {}, "How the balance is split",
+            infoTip("Equal: each strategy trades at the size it was backtested at, as if it had 1/n of the balance each. Steadier strategies get more: shares are set so each strategy's typical daily swing is about the same size, with the same total. Set each share myself: type a % next to each ticked strategy; a strategy on twice the equal share trades twice the size.")), weighting),
+          period)),
+        h("section", { class: "section" },
+          h("label", { class: "pick" }, sharedBox, h("span", {}, h("strong", {}, "Replay through one shared account"),
+            h("span", { class: "small muted" }, " Trades are taken in the order they happened and sized from the balance as it stood at the time, so the result compounds and the caps below can skip trades."))),
+          caps),
+        h("section", { class: "section" }, run)),
       h("div", { class: "panel" }, h("section", { class: "section" }, out))));
   clear($main).appendChild(page);
 }
@@ -56,21 +93,25 @@ function renderPortfolio(res, strategies) {
       h("div", {}, h("div", { class: "big " + (m.total_return_pct >= 0 ? "gain" : "loss") }, signed(m.total_return_pct, "%")), h("div", { class: "lbl" }, "Return together")),
       h("div", {}, h("div", { class: "big" }, num(m.max_drawdown_pct, 1) + "%"), h("div", { class: "lbl" }, "Worst drawdown")),
       h("div", {}, h("div", { class: "big" }, num(m.max_open_risk_pct, 1) + "%"), h("div", { class: "lbl" }, "Most at risk at once")),
-      h("div", {}, h("div", { class: "big" }, String(m.trades)), h("div", { class: "lbl" }, "Trades")),
+      h("div", {}, h("div", { class: "big" }, String(m.trades)), h("div", { class: "lbl" }, res.shared ? "Trades taken" : "Trades")),
+      res.shared ? h("div", {}, h("div", { class: "big" }, String(m.trades_skipped)), h("div", { class: "lbl" }, "Trades skipped")) : null,
       h("div", {}, h("div", { class: "big" }, num(m.time_in_market_pct, 0) + "%"), h("div", { class: "lbl" }, "Time in a trade")),
       h("div", {}, h("div", { class: "big" }, String(m.max_open_trades)), h("div", { class: "lbl" }, "Most trades open at once"))),
     h("p", { class: "muted" }, `${day(m.start)} to ${day(m.end)}: ${money(m.start_equity, sym)} would have become ${money(m.end_equity, sym)}. ` +
       `Some money was at risk ${num(m.time_with_risk_pct, 0)}% of the time; when it was, ${num(m.avg_open_risk_pct, 1)}% of the balance on average.`),
+    res.shared ? skippedNote(res.skipped) : null,
     lineChart(res.equity, { title: "Shared balance", fmt: (v) => money(v, sym), baseline: m.start_equity }),
     lineChart(res.drawdown, { title: "Drawdown", fmt: (v) => num(v, 1) + "%", baseline: 0, tone: "loss", fill: true, height: 120 }),
     lineChart(res.open_risk, { title: "At risk at once (% of balance, to the stops)", fmt: (v) => num(v, 2) + "%", baseline: 0, fill: true, height: 120 }),
     pnlOverlayChart(res.pnl_curves || {}, res.per_strategy, sym),
     h("div", { class: "table-wrap" }, h("table", { class: "trades" },
-      h("thead", {}, h("tr", {}, h("th", {}, "Strategy"), h("th", { class: "num" }, "Trades"), h("th", { class: "num" }, "Profit"),
-        h("th", { class: "num" }, "Share of balance"), h("th", { class: "num" }, "Share of profit"),
+      h("thead", {}, h("tr", {}, h("th", {}, "Strategy"), h("th", { class: "num" }, "Share"),
+        h("th", { class: "num" }, res.shared ? "Taken / skipped" : "Trades"), h("th", { class: "num" }, "Profit"),
+        h("th", { class: "num" }, "Return on balance"), h("th", { class: "num" }, "Share of profit"),
         h("th", { class: "num" }, "Time in a trade"), h("th", { class: "num" }, "Own worst drop"))),
       h("tbody", {}, res.per_strategy.map((p, i) => h("tr", {}, h("td", {}, h("span", { class: "swatch", style: `--swatch:${seriesColour(i)}` }), p.name),
-        h("td", { class: "num" }, String(p.trades)),
+        h("td", { class: "num" }, p.weight_pct === undefined ? "–" : num(p.weight_pct, 0) + "%"),
+        h("td", { class: "num" }, res.shared ? `${p.taken} / ${p.skipped}` : String(p.trades)),
         h("td", { class: "num " + (p.pnl >= 0 ? "gain" : "loss") }, signedMoney(p.pnl, sym)),
         h("td", { class: "num" }, signed(p.return_pct, "%")),
         h("td", { class: "num" }, p.contribution_pct === undefined ? "–" : signed(p.contribution_pct, "%")),
@@ -91,9 +132,23 @@ function renderPortfolio(res, strategies) {
           return td;
         }))))))));
   }
-  box.appendChild(h("p", { class: "notice" }, "Each strategy sizes its trades from the shared starting balance, so this doesn't compound. Open risk counts each trade's distance to its stop; gaps past a stop can lose more."));
+  box.appendChild(h("p", { class: "notice" }, res.shared
+    ? "Each trade was re-sized from the balance at the time it opened, so this compounds, and the result of every trade scales with its new size. Per-fill commissions scale too, which is an approximation. Open risk counts each trade's distance to its stop; gaps past a stop can lose more."
+    : "Each strategy sizes its trades from the shared starting balance, so this doesn't compound. Open risk counts each trade's distance to its stop; gaps past a stop can lose more."));
   if (res.notes.length) box.appendChild(h("ul", { class: "warnings" }, res.notes.map((w) => h("li", {}, w))));
   return box;
+}
+
+
+function skippedNote(sk) {
+  if (!sk) return null;
+  const total = sk.open_trades + sk.open_risk + sk.too_small;
+  if (!total) return h("p", { class: "small muted" }, "No trades were skipped.");
+  const parts = [];
+  if (sk.open_trades) parts.push(`${sk.open_trades} because the most-open-at-once cap was reached`);
+  if (sk.open_risk) parts.push(`${sk.open_risk} because the at-risk cap would have been passed`);
+  if (sk.too_small) parts.push(`${sk.too_small} because the balance was too small to size them`);
+  return h("p", { class: "small muted" }, `${total} trades skipped: ${parts.join("; ")}.`);
 }
 
 

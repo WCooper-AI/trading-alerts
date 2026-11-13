@@ -140,27 +140,87 @@ def walk_forward(curves: list[tuple[object, pd.Series]], folds: int = 4) -> dict
 # --------------------------------------------------------------------------- portfolio
 
 
-def portfolio(parts: list[tuple[str, str, BacktestResult]], balance: float) -> dict:
+WEIGHTING_MODES = ("equal", "inverse_vol", "custom")
+
+
+def _daily_pnl(res: BacktestResult) -> pd.Series:
+    pnl = res.equity - res.strategy.risk.account_size
+    pnl = pnl[~pnl.index.duplicated(keep="last")]
+    return pnl.resample("1D").last().ffill().diff().dropna()
+
+
+def portfolio_weights(mode: str | None, parts: list[tuple[str, str, BacktestResult]],
+                      custom: dict[str, float] | None = None) -> dict[str, float]:
+    """Each strategy's share of the shared balance; the shares add up to 1.
+
+    ``equal`` gives every strategy the same share. ``inverse_vol`` gives more to strategies
+    whose daily results moved less, so each one's typical daily swing is about the same size.
+    ``custom`` takes the user's shares in % (any positive numbers; they are scaled to add up to 100).
+    """
+    ids = [sid for sid, _, _ in parts]
+    if not ids:
+        return {}
+    mode = mode or "equal"
+    if mode not in WEIGHTING_MODES:
+        raise ValueError("Choose a weighting: equal, inverse_vol or custom")
+    if mode == "equal":
+        return {sid: 1.0 / len(ids) for sid in ids}
+    if mode == "inverse_vol":
+        vols = {}
+        for sid, _, res in parts:
+            d = _daily_pnl(res)
+            v = float(d.std()) if len(d) > 1 else float("nan")
+            vols[sid] = v if v and not np.isnan(v) and v > 0 else None
+        inv = {k: 1.0 / v for k, v in vols.items() if v is not None}
+        if not inv:
+            return {sid: 1.0 / len(ids) for sid in ids}
+        fill = sum(inv.values()) / len(inv)  # a strategy with no measurable swing gets an average share
+        raw = {sid: inv.get(sid, fill) for sid in ids}
+        total = sum(raw.values())
+        return {sid: v / total for sid, v in raw.items()}
+    custom = custom or {}
+    raw = {}
+    for sid in ids:
+        v = custom.get(sid)
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0 or np.isnan(v):
+            raise ValueError("Fill in a share (%) of 0 or more for every chosen strategy")
+        raw[sid] = float(v)
+    total = sum(raw.values())
+    if total <= 0:
+        raise ValueError("The shares must add up to more than 0")
+    return {sid: v / total for sid, v in raw.items()}
+
+
+def portfolio(parts: list[tuple[str, str, BacktestResult]], balance: float,
+              weights: dict[str, float] | None = None) -> dict:
     """Combine several backtests that each risked a % of the same starting balance.
 
     Each strategy was run without compounding at ``balance``, so adding their profit
     and loss together gives the shared account. Also works out how much was at risk
     at once (every open trade's distance to its stop) and how alike the strategies' days were.
+
+    ``weights`` (from :func:`portfolio_weights`) scale each strategy against an equal share:
+    a strategy on 1/n of the balance runs exactly as backtested, one on twice that trades
+    twice the size. Trades sizes are linear in the balance, so the curves are scaled.
     """
+    n = len(parts)
+    scale = {sid: (weights[sid] * n if weights else 1.0) for sid, _, _ in parts}
     pnl_curves, per, risk_events, open_events = {}, [], [], []
     for sid, name, res in parts:
-        pnl = res.equity - res.strategy.risk.account_size
+        pnl = (res.equity - res.strategy.risk.account_size) * scale[sid]
         pnl_curves[sid] = pnl[~pnl.index.duplicated(keep="last")]
+        own = balance + pnl_curves[sid]
         t = res.trades
         m = res.metrics
         per.append({"id": sid, "name": name, "market": m["market"], "trades": m["trades"],
                     "pnl": float(pnl.iloc[-1]), "return_pct": float(pnl.iloc[-1]) / balance * 100,
-                    "max_drawdown_pct": m["max_drawdown_pct"], "win_rate_pct": m.get("win_rate_pct"),
-                    "direction": res.strategy.direction, "timeframe": res.strategy.market.timeframe})
+                    "max_drawdown_pct": float(((own / own.cummax() - 1) * 100).min()), "win_rate_pct": m.get("win_rate_pct"),
+                    "direction": res.strategy.direction, "timeframe": res.strategy.market.timeframe,
+                    "weight_pct": (weights[sid] if weights else 1.0 / n) * 100})
         if len(t):
             pv = res.strategy.risk.point_value
             for row in t.itertuples():
-                amount = abs(row.entry_price - row.stop) * row.size * pv
+                amount = abs(row.entry_price - row.stop) * row.size * pv * scale[sid]
                 risk_events.append((pd.Timestamp(row.entry_time), amount, sid))
                 risk_events.append((pd.Timestamp(row.exit_time), -amount, sid))
                 open_events.append((pd.Timestamp(row.entry_time), 1, sid))
@@ -275,6 +335,149 @@ def _exposure(per: list[dict], aligned: pd.DataFrame, open_events: list[tuple], 
         "time_in_market_pct": float((open_trades > 0).mean() * 100),
         "avg_correlation": avg_corr,
         "diversification_ratio": div_ratio,
+    }
+
+
+# --------------------------------------------------------------------------- portfolio: one shared account
+
+
+def shared_account(parts: list[tuple[str, str, BacktestResult]], balance: float,
+                   weights: dict[str, float] | None = None, max_open_trades: int | None = None,
+                   max_open_risk_pct: float | None = None) -> dict:
+    """Replay every strategy's trades through one account, in the order they were entered.
+
+    Unlike :func:`portfolio`, the balance compounds: each trade is sized from the account as it
+    stood when the trade opened (its strategy's risk % times its share, see ``weights``), and a
+    trade is skipped when it would take the account past ``max_open_trades`` open at once or past
+    ``max_open_risk_pct`` of the balance at risk to the stops. Each trade's result scales with
+    its new size against the backtest's size; a trade the backtest sized at 0 stays at 0.
+    """
+    from .risk import position_size
+
+    n = len(parts)
+    scale = {sid: (weights[sid] * n if weights else 1.0) for sid, _, _ in parts}
+    rows = []
+    for sid, name, res in parts:
+        r = res.strategy.risk
+        for row in res.trades.itertuples():
+            rows.append({"sid": sid, "entry": pd.Timestamp(row.entry_time), "exit": pd.Timestamp(row.exit_time),
+                         "entry_price": float(row.entry_price), "stop": float(row.stop), "size": float(row.size),
+                         "pnl": float(row.pnl), "risk_pct": r.risk_per_trade_pct * scale[sid], "risk": r})
+    rows.sort(key=lambda x: (x["entry"], x["exit"]))
+
+    equity = float(balance)
+    open_: list[dict] = []
+    eq_points, risk_events, open_events, taken = [], [], [], []
+    per = {sid: {"id": sid, "name": name, "market": res.metrics["market"], "trades": res.metrics["trades"],
+                 "taken": 0, "skipped": 0, "pnl": 0.0, "win_rate_pct": None,
+                 "direction": res.strategy.direction, "timeframe": res.strategy.market.timeframe,
+                 "weight_pct": (weights[sid] if weights else 1.0 / n) * 100} for sid, name, res in parts}
+    skipped = {"open_trades": 0, "open_risk": 0, "too_small": 0}
+
+    def close_until(t):
+        nonlocal equity
+        open_.sort(key=lambda x: x["exit"])
+        while open_ and open_[0]["exit"] <= t:
+            tr = open_.pop(0)
+            equity += tr["pnl"]
+            per[tr["sid"]]["pnl"] += tr["pnl"]
+            eq_points.append((tr["exit"], equity))
+            risk_events.append((tr["exit"], -tr["risk_amount"], tr["sid"]))
+            open_events.append((tr["exit"], -1, tr["sid"]))
+
+    for tr in rows:
+        close_until(tr["entry"])
+        p = per[tr["sid"]]
+        if max_open_trades is not None and len(open_) >= max_open_trades:
+            p["skipped"] += 1
+            skipped["open_trades"] += 1
+            continue
+        r = tr["risk"]
+        dist = abs(tr["entry_price"] - tr["stop"])
+        size = position_size(equity, tr["risk_pct"], dist, r.point_value, r.size_step, r.min_size, r.max_size)
+        if size <= 0:
+            p["skipped"] += 1
+            skipped["too_small"] += 1
+            continue
+        risk_amount = dist * size * r.point_value
+        open_risk = sum(x["risk_amount"] for x in open_)
+        if max_open_risk_pct is not None and equity > 0 and (open_risk + risk_amount) / equity * 100 > max_open_risk_pct + 1e-9:
+            p["skipped"] += 1
+            skipped["open_risk"] += 1
+            continue
+        pnl = tr["pnl"] * size / tr["size"] if tr["size"] > 0 else 0.0
+        open_.append({**tr, "size": size, "pnl": pnl, "risk_amount": risk_amount})
+        taken.append({"sid": tr["sid"], "pnl": pnl, "entry": tr["entry"], "exit": tr["exit"]})
+        risk_events.append((tr["entry"], risk_amount, tr["sid"]))
+        open_events.append((tr["entry"], 1, tr["sid"]))
+        p["taken"] += 1
+    close_until(pd.Timestamp("2200-01-01", tz="UTC"))
+
+    start = min(res.equity.index[0] for _, _, res in parts)
+    end = max([res.equity.index[-1] for _, _, res in parts] + [t for t, _ in eq_points])  # exits can land after the last candle
+    grid = pd.date_range(start.floor("h"), end.ceil("h"), freq="1h")
+    eq = pd.Series([balance] + [v for _, v in eq_points], index=pd.DatetimeIndex([start] + [t for t, _ in eq_points]))
+    eq = eq[~eq.index.duplicated(keep="last")].sort_index()
+    equity_s = eq.reindex(eq.index.union(grid)).ffill().reindex(grid).fillna(float(balance))
+    dd = (equity_s / equity_s.cummax() - 1) * 100
+
+    curves = {}
+    for sid in per:
+        pts = [(t["exit"], t["pnl"]) for t in taken if t["sid"] == sid]
+        c = pd.Series([0.0] + [v for _, v in pts], index=pd.DatetimeIndex([start] + [t for t, _ in pts]))
+        c = c.groupby(level=0).sum().sort_index().cumsum()
+        curves[sid] = c.reindex(c.index.union(grid)).ffill().reindex(grid).fillna(0.0)
+    aligned = pd.DataFrame(curves)
+
+    if risk_events:
+        ev = pd.DataFrame(risk_events, columns=["time", "amount", "sid"])
+        ev["time"] = pd.to_datetime(ev["time"], utc=True)
+        ev = ev.sort_values(["time", "amount"])
+        running = ev.set_index("time")["amount"].cumsum()
+        running = running[~running.index.duplicated(keep="last")]
+        amt = running.reindex(running.index.union(grid)).ffill().reindex(grid).fillna(0.0).clip(lower=0)
+        open_risk_s = amt / equity_s.where(equity_s > 0, np.nan) * 100
+        open_risk_s = open_risk_s.fillna(0.0)
+    else:
+        open_risk_s = pd.Series(0.0, index=grid)
+
+    per_list = list(per.values())
+    for p in per_list:
+        wins = [t for t in taken if t["sid"] == p["id"] and t["pnl"] > 0]
+        p["win_rate_pct"] = len(wins) / p["taken"] * 100 if p["taken"] else None
+        p["return_pct"] = p["pnl"] / balance * 100
+        own = balance + aligned[p["id"]]
+        p["max_drawdown_pct"] = float(((own / own.cummax() - 1) * 100).min())
+    daily = aligned.resample("1D").last().diff().dropna(how="all")
+    corr = None
+    if aligned.shape[1] > 1 and len(daily) > 10:
+        c = daily.loc[:, daily.std() > 0].corr()
+        corr = {"ids": list(c.columns), "values": [[None if pd.isna(x) else float(x) for x in row] for row in c.to_numpy()]}
+    exposure = _exposure(per_list, aligned, open_events, grid, daily, corr)
+    return {
+        "per_strategy": per_list,
+        "equity": equity_s,
+        "drawdown": dd,
+        "open_risk": open_risk_s,
+        "pnl_curves": aligned,
+        "exposure": exposure,
+        "skipped": skipped,
+        "metrics": {
+            "start": grid[0].isoformat(), "end": grid[-1].isoformat(),
+            "start_equity": balance, "end_equity": float(equity_s.iloc[-1]),
+            "total_return_pct": (float(equity_s.iloc[-1]) / balance - 1) * 100,
+            "max_drawdown_pct": float(dd.min()),
+            "trades": len(taken),
+            "trades_skipped": int(sum(skipped.values())),
+            "max_open_risk_pct": float(open_risk_s.max()),
+            "avg_open_risk_pct": float(open_risk_s[open_risk_s > 0].mean()) if (open_risk_s > 0).any() else 0.0,
+            "time_with_risk_pct": float((open_risk_s > 0).mean() * 100),
+            "max_open_trades": exposure["max_open_trades"],
+            "time_in_market_pct": exposure["time_in_market_pct"],
+            "avg_correlation": exposure["avg_correlation"],
+            "diversification_ratio": exposure["diversification_ratio"],
+        },
+        "correlation": corr,
     }
 
 
