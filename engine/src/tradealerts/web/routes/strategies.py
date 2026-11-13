@@ -21,8 +21,7 @@ from ..common import (
 )
 from ..runs_view import run_health, run_series, run_summary
 from ... import versions
-from ..strategy_io import (alerts_on, check_running_limit, record_version, save, save_new, strategy_path, validate,
-                          write)
+from ..strategy_io import (alerts_on, check_running_limit, record_version, save, save_new, strategy_path, validate)
 
 TEMPLATES = resources.files("tradealerts") / "templates"
 

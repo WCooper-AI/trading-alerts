@@ -171,7 +171,8 @@ def test_old_database_gains_new_columns(tmp_path):
                       "entry_time TEXT NOT NULL, entry_price REAL NOT NULL, exit_time TEXT, exit_price REAL, size REAL NOT NULL, "
                       "point_value REAL NOT NULL DEFAULT 1, fees REAL NOT NULL DEFAULT 0, currency TEXT, strategy_id TEXT, "
                       "paper_trade_id INTEGER, notes TEXT, created_at TEXT NOT NULL);")
-    con.commit(); con.close()
+    con.commit()
+    con.close()
     store = StateStore(db)
     a = store.price_alert(1)
     assert a["repeat"] == "once" and a["cross"] == 0 and a["fired_count"] == 0

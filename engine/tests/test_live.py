@@ -157,7 +157,7 @@ def test_forward_test_runs_silently_for_drafts_and_only_counts_new_candles(setup
     cfg, bars = setup
     draft = {**STRATEGY, "template": True}
     (cfg.strategies_dir / "live.yaml").write_text(yaml.safe_dump(draft))
-    strat = load_strategy(cfg.strategies_dir / "live.yaml")
+    load_strategy(cfg.strategies_dir / "live.yaml")
     store = StateStore(cfg.state_db)
     rec = Recorder()
     loader = lambda c, s: bars
