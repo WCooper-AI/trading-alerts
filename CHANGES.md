@@ -30,7 +30,7 @@
 
 - **Port handshake.** The engine binds its own socket and prints `TRADEALERTS_PORT=<n>`; the
   desktop app reads it, so a busy port no longer leaves a blank window (`--port 0` works too).
-- CI runs the tests on Python 3.10, 3.11, 3.12 and 3.13, with a separate `ruff` lint job.
+- CI runs the tests on Python 3.11, 3.12 and 3.13, with a separate `ruff` lint job.
 
 ## Backups, sign-in and data checks
 

@@ -367,17 +367,31 @@ function undoable(label, hide, run) {
   t.classList.remove("bad");
   t.hidden = true; void t.offsetWidth; t.hidden = false;
   clearTimeout(toastTimer);
+  let settled = false;
+  let timer = null;
   const finish = async () => {
-    t.hidden = true;
-    if (undone) return;
+    if (settled || undone) return;
+    settled = true;
+    clearTimeout(timer);
+    app.pendingDeletes = (app.pendingDeletes || []).filter((f) => f !== flush);
+    if (t.contains(btn)) t.hidden = true;
     try { await run(); } catch (e) { hide(false); toast(e.message, true); }
   };
-  btn.addEventListener("click", () => { undone = true; hide(false); t.hidden = true; clearTimeout(toastTimer); });
-  toastTimer = setTimeout(finish, 6000);
+  const flush = () => { finish(); };
+  btn.addEventListener("click", () => {
+    if (settled) return;
+    undone = true;
+    settled = true;
+    clearTimeout(timer);
+    app.pendingDeletes = (app.pendingDeletes || []).filter((f) => f !== flush);
+    hide(false);
+    if (t.contains(btn)) t.hidden = true;
+  });
+  timer = setTimeout(finish, 6000);
   // leaving the page doesn't cancel it
-  app.pendingDeletes = (app.pendingDeletes || []).concat(() => { if (!undone) { clearTimeout(toastTimer); finish(); } });
+  app.pendingDeletes = (app.pendingDeletes || []).concat(flush);
 }
-window.addEventListener("beforeunload", () => { for (const f of app.pendingDeletes || []) f(); });
+window.addEventListener("beforeunload", () => { for (const f of [...(app.pendingDeletes || [])]) f(); });
 
 // --------------------------------------------------------------------- news calendar (settings)
 

@@ -405,7 +405,7 @@ function optimiserPane({ fetchData, settings, apply, period }) {
     h("div", { class: "inline" },
       h("div", { class: "field" }, h("label", {}, "Rank by"), scorePick),
       h("div", { class: "field" }, h("label", {}, "Needs at least"), h("div", { class: "inline" },
-        numberInput(minTrades, (n) => { minTrades = n; }, { label: "Minimum trades", min: 0, cls: "narrow", integer: true, allowEmpty: false }), h("span", { class: "small muted" }, "trades")))),
+        numberInput(minTrades, (n) => { minTrades = n ?? 0; }, { label: "Minimum trades", min: 0, cls: "narrow", integer: true, allowEmpty: false, emptyValue: 0 }), h("span", { class: "small muted" }, "trades")))),
     h("div", { class: "inline" },
       h("div", { class: "field" }, h("label", {}, "Keep back", infoTip("Ranks the combinations on the first part of the period only, then shows how the winner did on the last part, which it never saw. A winner that holds up there is more likely to hold up live.")), holdoutPick),
       h("div", { class: "field" }, h("label", {}, "Walk-forward check", infoTip("Splits the period into stretches. Before each stretch it picks the combination that scored best on all the data so far, then records how that combination did on the stretch. Every choice only uses the past, like tuning for real would.")), foldsPick)),

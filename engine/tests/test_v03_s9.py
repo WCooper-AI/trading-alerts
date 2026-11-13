@@ -107,3 +107,25 @@ def test_settings_round_trip():
     assert raw["report"]["drawdown_pct"] == 15 and raw["report"]["daily_hour"] == 7
     back = settings_from_raw(raw)
     assert back["notifiers"]["telegram"]["token_set"] and back["report"]["near_pct"] == 10
+
+
+def test_check_data_passes_symbol_for_weekend_24_7_crypto(tmp_path):
+    from types import SimpleNamespace
+    import pandas as pd
+    from tradealerts import watch
+    from tradealerts.state import StateStore
+
+    # Friday morning bars, checked on Saturday noon when FX is closed (no warning) but crypto (24/7) is stale.
+    idx = pd.date_range("2024-03-08 00:00", periods=10, freq="1h", tz="UTC")
+    raw = pd.DataFrame({"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5, "volume": 10}, index=idx)
+    sat = pd.Timestamp("2024-03-09 12:00:00Z")
+    store = StateStore(tmp_path / "s.db")
+    try:
+        fx = SimpleNamespace(id="fx", name="FX", market=SimpleNamespace(timeframe="1h", label="EUR/USD", symbol="EURUSD=X"))
+        btc = SimpleNamespace(id="btc", name="BTC", market=SimpleNamespace(timeframe="1h", label="Bitcoin", symbol="BTC-USD"))
+        fx_emitted = [watch.check_data(store, fx, raw, None, sat, [], send=False) for _ in range(watch.BAD_POLLS)]
+        btc_emitted = [watch.check_data(store, btc, raw, None, sat, [], send=False) for _ in range(watch.BAD_POLLS)]
+        assert not any(fx_emitted)
+        assert btc_emitted[-1] is True and btc_emitted[:-1] == [False] * (watch.BAD_POLLS - 1)
+    finally:
+        store.close()

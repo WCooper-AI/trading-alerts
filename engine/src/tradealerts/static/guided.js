@@ -219,9 +219,16 @@ async function viewCreate(preset) {
       settings: () => knobSettings(recipe, st.settings),
       apply: (setting, value) => { st.settings[setting.key] = value; dirty = true; renderForm(); rebuild(); },
     });
-    const saveDraft = h("button", { type: "button", class: "quiet", onclick: () => save("draft") }, "Save as draft");
-    const saveTest = h("button", { class: "primary", type: "button", onclick: () => save("test") }, "Save and start a forward test");
-    const saveLive = h("button", { type: "button", onclick: () => save("alerts") }, "Start with phone alerts");
+    const saveButtons = [];
+    const onSaveClick = (mode) => async () => {
+      if (saveButtons.some((b) => b.disabled)) return;
+      saveButtons.forEach((b) => { b.disabled = true; });
+      try { await save(mode); } finally { saveButtons.forEach((b) => { b.disabled = false; }); }
+    };
+    const saveDraft = h("button", { type: "button", class: "quiet", onclick: onSaveClick("draft") }, "Save as draft");
+    const saveTest = h("button", { class: "primary", type: "button", onclick: onSaveClick("test") }, "Save and start a forward test");
+    const saveLive = h("button", { type: "button", onclick: onSaveClick("alerts") }, "Start with phone alerts");
+    saveButtons.push(saveDraft, saveTest, saveLive);
     append(step3, [
       h("div", { class: "editor" },
         h("div", { class: "panel" },
@@ -278,6 +285,7 @@ async function viewCreate(preset) {
     buildTimer = setTimeout(rebuildNow, 250);
   }
 
+  let createdId = null;
   async function save(mode) {
     const miss = missingSettings(recipeById(st.recipe), st.settings);
     if (miss.length) { toast("Still to fill in: " + miss.join(", "), true); return; }
@@ -289,7 +297,8 @@ async function viewCreate(preset) {
       alerts: { enabled: true, priority: "high" } };
     if (live) data.enabled = true;
     try {
-      const r = await POST("/strategies", { data });
+      const r = createdId ? (await PUT(`/strategies/${encodeURIComponent(createdId)}`, { data }), { id: createdId }) : await POST("/strategies", { data });
+      createdId = r.id;
       dirty = false; app.guard = null; app.isDirty = null;
       if (mode !== "draft") {
         await POST(`/strategies/${encodeURIComponent(r.id)}/forward-test/start`);
@@ -313,7 +322,7 @@ async function viewCreate(preset) {
 async function viewSimple(id, data, run) {
   setNav("strategies");
   const recipe = recipeById(data.recipe.id);
-  if (!recipe) return viewEditor(id, null, data);
+  if (!recipe) return viewEditor(id, null, data, run);
   let marketKey = data.recipe.market;
   const st = clone(data.recipe.settings);
   let dirty = false;

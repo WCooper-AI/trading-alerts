@@ -1,7 +1,7 @@
 {
   "name": "trading-alerts-desktop",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.3.3",
   "scripts": {
     "dev": "tauri dev",
     "engine": "python engine/build_engine.py",

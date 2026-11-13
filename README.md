@@ -12,7 +12,7 @@ It never places trades, and it doesn't sell signals.
 
 ## Install (self-hosted, free)
 
-You need **Python 3.10+**.
+You need **Python 3.11+**.
 
 1. Download the latest [release](../../releases/latest) and unzip it.
 2. Run the setup script:

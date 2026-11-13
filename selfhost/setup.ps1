@@ -31,10 +31,10 @@ function Bold($t) { Write-Host $t -ForegroundColor Cyan }
 function Fail($t) { Write-Host $t -ForegroundColor Red; exit 1 }
 
 function Find-Python {
-    foreach ($cmd in @("py -3.13", "py -3.12", "py -3.11", "py -3.10", "python")) {
+    foreach ($cmd in @("py -3.14", "py -3.13", "py -3.12", "py -3.11", "python")) {
         $parts = $cmd.Split(" ")
         try {
-            $ok = & $parts[0] $parts[1..9] -c "import sys; print(sys.version_info >= (3, 10))" 2>$null
+            $ok = & $parts[0] $parts[1..9] -c "import sys; print(sys.version_info >= (3, 11))" 2>$null
             if ($ok -eq "True") { return $parts }
         } catch { }
     }
@@ -46,7 +46,7 @@ function Install-Engine {
     if (-not (Test-Path $Py)) {
         $python = Find-Python
         if (-not $python) {
-            Say "Trading Alerts needs Python 3.10 or newer."
+            Say "Trading Alerts needs Python 3.11 or newer."
             Say "Install it from https://www.python.org/downloads/ (tick 'Add python.exe to PATH'), then run this again."
             exit 1
         }

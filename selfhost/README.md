@@ -13,7 +13,7 @@ so you can see how the rules do live before you risk money.
 
 ## Getting started
 
-You need **Python 3.10 or newer** ([python.org](https://www.python.org/downloads/)).
+You need **Python 3.11 or newer** ([python.org](https://www.python.org/downloads/)).
 
 **Linux and macOS:** open a terminal in this folder and run
 

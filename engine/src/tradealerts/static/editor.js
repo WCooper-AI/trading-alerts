@@ -283,7 +283,7 @@ function numberInput(value, onSet, { label, step = "any", min = null, integer = 
   el.addEventListener("input", () => {
     const raw = el.value.trim();
     mark();
-    if (raw === "") { el.removeAttribute("aria-invalid"); onSet(emptyValue); return; }
+    if (raw === "") { el.removeAttribute("aria-invalid"); el.setCustomValidity(""); onSet(emptyValue); return; }
     const n = Number(raw);
     const bad = Number.isNaN(n) || (integer && !Number.isInteger(n)) || (min !== null && n < Number(min));
     el.setAttribute("aria-invalid", String(bad));

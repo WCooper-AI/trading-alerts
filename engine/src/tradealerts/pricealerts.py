@@ -68,10 +68,14 @@ def check_price_alerts(cfg, store: StateStore, notifiers: list[Notifier], now=No
             log.warning("Price alerts for %s: couldn't load prices: %s", market, exc)
             continue
         bars = bars[bars.index <= now]
+        if bars.empty:
+            continue
+        latest_end = bars.index[-1] + pd.Timedelta(minutes=5)
+        miss_checked_to = min(now, latest_end).isoformat(timespec="seconds")
         for a in items:
             got = hit(a, bars)
             if got is None:
-                store.update_price_alert(a["id"], checked_to=now.isoformat(timespec="seconds"))
+                store.update_price_alert(a["id"], checked_to=miss_checked_to)
                 continue
             t, price = got
             label = a.get("label") or MARKETS_BY_KEY.get(market, {}).get("label", market)
@@ -88,8 +92,9 @@ def check_price_alerts(cfg, store: StateStore, notifiers: list[Notifier], now=No
                                 f"Alert not sent: {label} {word} {price:,.5g}\n" + "; ".join(errors), False)
             # triggered_price is the latest price when it fired (the level itself is "price")
             again = a.get("repeat") == "every"
+            hit_checked_to = max(min(now, latest_end), t + pd.Timedelta(minutes=5)).isoformat(timespec="seconds")
             store.update_price_alert(a["id"], active=1 if again else 0, triggered_at=t.isoformat(), triggered_price=last,
-                                     checked_to=now.isoformat(timespec="seconds"), last_fired_at=t.isoformat(),
+                                     checked_to=hit_checked_to, last_fired_at=t.isoformat(),
                                      fired_count=int(a.get("fired_count") or 0) + 1)
             fired.append({**a, "triggered_at": t.isoformat()})
     return fired

@@ -897,7 +897,7 @@ def score_of(row: dict, score: str) -> float | None:
     if row.get("error") or not row.get("trades"):
         return None
     if score == "return_dd":
-        dd = row.get("max_drawdown_pct") or 0.0
+        dd = abs(row.get("max_drawdown_pct") or 0.0)
         return row["return_pct"] / dd if dd > 0 else (row["return_pct"] if row["return_pct"] > 0 else None)
     if score == "profit_factor":
         pf = row.get("profit_factor")

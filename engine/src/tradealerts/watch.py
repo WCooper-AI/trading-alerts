@@ -46,7 +46,8 @@ def check_data(store: StateStore, strategy, raw: pd.DataFrame, run_id, now: pd.T
 
     Returns True when the event was emitted on this call."""
     key = f"watch:data:{strategy.id}"
-    warnings = [w for w in dataquality.check(raw, strategy.market.timeframe, now) if w["kind"] == "stale"]
+    warnings = [w for w in dataquality.check(raw, strategy.market.timeframe, now,
+                                             symbol=getattr(strategy.market, "symbol", "")) if w["kind"] == "stale"]
     count = _get(store, key, 0)
     if not warnings:
         if count:

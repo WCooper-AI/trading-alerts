@@ -261,3 +261,39 @@ def test_journal_ui_has_new_fields_and_filters():
     mk = (Path(__file__).resolve().parents[1] / "src" / "tradealerts" / "static" / "markets.js").read_text()
     for needle in ("quality-strip", "cooldown_minutes", "Only when it crosses", "Save changes", "away ("):
         assert needle in mk
+
+
+def test_price_alerts_do_not_skip_lagging_candles(tmp_path):
+    from types import SimpleNamespace
+
+    store = StateStore(tmp_path / "p.db")
+    try:
+        a = store.add_price_alert(market="us500", label="US 500", direction="above", price=105.0)
+        t0 = "2024-03-04T12:00:00+00:00"
+        store.db.execute("UPDATE price_alerts SET created_at = ?, checked_to = ? WHERE id = ?", (t0, t0, a["id"]))
+        store.db.commit()
+        cfg = SimpleNamespace(markets={})
+
+        # Empty bars must not advance checked_to past t0.
+        empty = bars(0, start="2024-03-04 12:00", freq="5min")
+        assert pricealerts.check_price_alerts(cfg, store, [], pd.Timestamp("2024-03-04T12:30:00Z"),
+                                              loader=lambda *_: empty) == []
+        assert store.price_alert(a["id"])["checked_to"] == t0
+
+        # Lagging feed ending at 12:10 (covers up to 12:15) while wall clock is 12:30 must set checked_to to 12:15.
+        early = bars(3, start="2024-03-04 12:00", freq="5min")
+        early[["open", "high", "low", "close"]] = 100.0
+        assert pricealerts.check_price_alerts(cfg, store, [], pd.Timestamp("2024-03-04T12:30:00Z"),
+                                              loader=lambda *_: early) == []
+        assert store.price_alert(a["id"])["checked_to"] == "2024-03-04T12:15:00+00:00"
+
+        # When the delayed 12:15..12:30 candles arrive later with a breach at 12:20, the alert must still fire.
+        later = bars(7, start="2024-03-04 12:00", freq="5min")
+        later[["open", "high", "low", "close"]] = 100.0
+        later.loc[pd.Timestamp("2024-03-04 12:20:00Z"), ["high", "close"]] = 106.0
+        fired = pricealerts.check_price_alerts(cfg, store, [], pd.Timestamp("2024-03-04T12:35:00Z"),
+                                               loader=lambda *_: later)
+        assert len(fired) == 1
+        assert fired[0]["id"] == a["id"]
+    finally:
+        store.close()

@@ -266,3 +266,21 @@ def test_sweep_still_needs_two_values(client):
     assert client.post("/api/sweep", json=body, headers=H).status_code == 422
     body["values"] = [30, 35]
     assert client.post("/api/sweep", json=body, headers=H).status_code == 200
+
+
+def test_score_of_return_dd_uses_absolute_negative_drawdown():
+    low_dd = {"trades": 10, "return_pct": 12.0, "max_drawdown_pct": -3.0}   # 12 / 3 = 4.0
+    high_dd = {"trades": 10, "return_pct": 20.0, "max_drawdown_pct": -10.0}  # 20 / 10 = 2.0
+    assert analysis.score_of(low_dd, "return_dd") == pytest.approx(4.0)
+    assert analysis.score_of(high_dd, "return_dd") == pytest.approx(2.0)
+    assert analysis.score_of(low_dd, "return_dd") > analysis.score_of(high_dd, "return_dd")
+    # Real backtest summaries store negative max_drawdown_pct; optimise(..., score="return_dd") must rank by return/|dd|.
+    df = synthetic_bars(days=240, freq="1h", seed=4)
+    items = [((rsi, atr), variant(rsi, atr)) for rsi in (25, 30, 35, 40) for atr in (1.0, 1.5, 2.0, 3.0)]
+    out = analysis.optimise(None, items, df, None, None, score="return_dd", min_trades=1, holdout_pct=0)
+    scored = [r for r in out["rows"] if r.get("score") is not None and (r.get("max_drawdown_pct") or 0) < 0]
+    assert scored, "expected rows with negative max_drawdown_pct from real backtest"
+    for r in scored:
+        assert r["score"] == pytest.approx(r["return_pct"] / abs(r["max_drawdown_pct"]))
+    best_row = max((r for r in out["rows"] if r.get("score") is not None), key=lambda r: r["score"])
+    assert out["best"] == best_row["values"]

@@ -387,6 +387,7 @@ function candleChart(initial, { height = 380, onPick = null, title = null, onMar
       shape.appendChild(tt);
       if (onMark && m.trade !== undefined) {
         shape.classList.add("clickable");
+        shape.addEventListener("pointerdown", (e) => e.stopPropagation());
         shape.addEventListener("pointerup", (e) => { e.stopPropagation(); onMark(m); });
       }
       svgEl.appendChild(shape);
@@ -426,7 +427,13 @@ function candleChart(initial, { height = 380, onPick = null, title = null, onMar
     return { px: ((e.clientX - r.left) / r.width) * W, py: ((e.clientY - r.top) / r.height) * H };
   };
   let drag = null;
-  svgEl.addEventListener("pointerdown", (e) => { drag = { x: e.clientX, offset, moved: false }; svgEl.setPointerCapture(e.pointerId); });
+  svgEl.addEventListener("pointerdown", (e) => {
+    if (e.button || (e.target.closest && e.target.closest(".clickable"))) return;
+    drag = { x: e.clientX, offset, moved: false };
+    svgEl.setPointerCapture(e.pointerId);
+  });
+  svgEl.addEventListener("pointercancel", () => { drag = null; });
+  svgEl.addEventListener("lostpointercapture", () => { drag = null; });
   svgEl.addEventListener("pointermove", (e) => {
     if (!geom) return;
     if (drag) {

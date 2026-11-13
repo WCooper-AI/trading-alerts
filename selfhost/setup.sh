@@ -31,8 +31,8 @@ ask()  { local a; read -r -p "$1 [y/N] " a; [[ "$a" =~ ^[Yy] ]]; }
 # --------------------------------------------------------------------------- the engine
 
 find_python() {
-  for p in python3.13 python3.12 python3.11 python3.10 python3; do
-    if command -v "$p" >/dev/null 2>&1 && "$p" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+  for p in python3.14 python3.13 python3.12 python3.11 python3; do
+    if command -v "$p" >/dev/null 2>&1 && "$p" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
       echo "$p"; return 0
     fi
   done
@@ -43,7 +43,7 @@ install_engine() {
   [ -f "$ENGINE/pyproject.toml" ] || fail "Can't find the engine folder next to this script ($ENGINE)."
   local py
   if ! py="$(find_python)"; then
-    say "Trading Alerts needs Python 3.10 or newer."
+    say "Trading Alerts needs Python 3.11 or newer."
     if [ "$OS" = mac ]; then say "Install it from https://www.python.org/downloads/ (or: brew install python), then run this again."
     else say "Install it with your package manager, e.g.  sudo apt install python3 python3-venv  or  sudo pacman -S python"; fi
     exit 1

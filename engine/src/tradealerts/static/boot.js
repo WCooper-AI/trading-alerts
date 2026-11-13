@@ -132,9 +132,9 @@ async function route() {
   // Show a placeholder while a slow page loads, but never on top of a page that has already drawn itself.
   const before = $main.firstChild;
   const skel = setTimeout(() => { if ($main.firstChild === before) clear($main).appendChild(skeleton()); }, 160);
-  const hash = location.hash || "#/";
-  const parts = hash.slice(2).split("?")[0].split("/").map(decodeURIComponent);
   try {
+    const hash = location.hash || "#/";
+    const parts = hash.slice(2).split("?")[0].split("/").map(decodeURIComponent);
     if (parts[0] === "s" && parts[1]) {
       const rec = await GET("/strategies/" + encodeURIComponent(parts[1]));
       if (rec.data.recipe && parts[2] !== "advanced") await viewSimple(parts[1], rec.data, rec.run);
@@ -251,7 +251,9 @@ async function boot() {
     }
     [app.meta, app.recipes] = await Promise.all([GET("/meta"), GET("/recipes")]);
   } catch (e) {
-    if (!(e instanceof ApiError)) clear($main).appendChild(h("p", { class: "error-box" }, "Can't reach the Trading Alerts server. Is it still running?"));
+    if (e instanceof ApiError && e.message === "Sign in to continue") return;
+    const msg = e instanceof ApiError ? e.message : "Can't reach the Trading Alerts server. Is it still running?";
+    clear($main).appendChild(h("p", { class: "error-box" }, msg));
     return;
   }
   document.getElementById("topbar").hidden = false;
