@@ -82,6 +82,8 @@ def stamp(ws: Workspace, s, body: dict, metrics: dict) -> dict:
         "spread": s.spread,
         "used_data_spread": metrics.get("used_data_spread"),
         "funding_pct": s.funding_pct,
+        "slippage": s.slippage,
+        "slippage_pct": s.slippage_pct,
         "tested_at": now_iso(),
     }
 

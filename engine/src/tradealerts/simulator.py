@@ -18,6 +18,10 @@ How trades are filled, modelled on a CFD/spread-bet broker:
   ``costs.borrow_pct`` a year (stock borrow fee) over the same nights.
 * ``costs.commission`` (money) and ``costs.commission_pct`` (% of the fill's value)
   are charged on the entry fill and again on the exit fill.
+* ``costs.slippage`` (price points) and ``costs.slippage_pct`` (% of the fill price)
+  move every market fill against you on top of the spread: entries, stops, exit
+  rules, time limits and the end-of-data close. Targets are limit orders, filled
+  at their price or better, so they get none. Reported per trade as ``slippage_cost``.
 
 State is a plain dict so live runs can save it to disk between checks.
 """
@@ -110,6 +114,10 @@ class Simulator:
         s = self.s
         return s.commission + price * size * s.risk.point_value * s.commission_pct / 100
 
+    def _slip(self, price: float) -> float:
+        """Price points lost to slippage on one market fill at ``price``."""
+        return self.s.slippage + abs(price) * self.s.slippage_pct / 100
+
     def _accrue_funding(self, until, price: float) -> None:
         p = self.state["position"]
         rate = self._nightly_pct()
@@ -145,6 +153,8 @@ class Simulator:
         inside it, its end for exits at its close (time limit, end of data)."""
         p = self.state["position"]
         s = self.s
+        slip = 0.0 if reason == "target" else self._slip(exit_price)
+        exit_price -= s.sign * slip
         gross = (exit_price - p["entry_price"]) * s.sign * p["size"] * s.risk.point_value
         funding = p.get("funding", 0.0)
         commission = p.get("commission", 0.0) + self._commission(exit_price, p["size"])
@@ -152,6 +162,7 @@ class Simulator:
         risk_amount = abs(p["entry_price"] - p["stop"]) * p["size"] * s.risk.point_value
         exit_r = (exit_price - p["entry_price"]) * s.sign / abs(p["entry_price"] - p["stop"]) if p["stop"] != p["entry_price"] else 0.0
         spread_cost = (p.get("entry_half_spread", 0.0) + exit_half_spread) * p["size"] * s.risk.point_value
+        slippage_cost = (p.get("entry_slippage", 0.0) + slip) * p["size"] * s.risk.point_value
         # funding was already taken night by night and the entry commission on the fill
         self.state["equity"] += gross - (commission - p.get("commission", 0.0))
         self.state["position"] = None
@@ -176,6 +187,7 @@ class Simulator:
             "spread_cost": spread_cost,
             "borrow": p.get("borrow", 0.0),
             "commission": commission,
+            "slippage_cost": slippage_cost,
             "entry_reason": p.get("entry_reason") or {},
             "exit_values": getattr(self, "_values", {}) or {},
             # the closing candle may run on past the stop or target after the trade is out,
@@ -262,7 +274,8 @@ class Simulator:
         pend = st["pending_entry"]
         st["pending_entry"] = None
         if pend and not st["position"]:
-            fill = o + sign * hs
+            slip = self._slip(o + sign * hs)
+            fill = o + sign * (hs + slip)
             try:
                 stop, target = s.plan(fill, pend["refs"])
                 size = self.size_for(fill, stop)
@@ -280,6 +293,7 @@ class Simulator:
                     "size": size,
                     "bars_held": 0,
                     "entry_half_spread": hs,
+                    "entry_slippage": slip,
                     "funding": 0.0,
                     "commission": self._commission(fill, size),
                     "funded_until": str(time),

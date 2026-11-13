@@ -150,6 +150,8 @@ def compute_metrics(strategy: Strategy, trades: pd.DataFrame, equity: pd.Series,
         "total_spread_cost": float(trades["spread_cost"].sum()) if len(trades) else 0.0,
         "total_commission": float(trades["commission"].sum()) if len(trades) and "commission" in trades else 0.0,
         "total_borrow": float(trades["borrow"].sum()) if len(trades) and "borrow" in trades else 0.0,
+        "total_slippage": float(trades["slippage_cost"].sum()) if len(trades) and "slippage_cost" in trades else 0.0,
+        "sample_warning": sample_warning(len(trades)),
     }
     if len(trades):
         pnl = trades["pnl"]
@@ -174,6 +176,7 @@ def compute_metrics(strategy: Strategy, trades: pd.DataFrame, equity: pd.Series,
             hold_histogram=hold_histogram(trades),
         )
     m.update(risk_ratios(equity, strategy.market.timeframe))
+    m["sharpe_ci"] = sharpe_ci(trades, equity, strategy.market.timeframe, m["sharpe"])
     m["longest_underwater_days"] = longest_underwater_days(equity)
     m["monthly_returns"] = monthly_returns(equity)
     return m
@@ -264,6 +267,51 @@ def risk_ratios(equity: pd.Series, timeframe: str) -> dict:
     if dsd > 0:
         out["sortino"] = mean / dsd * scale
     return out
+
+
+MIN_TRADES_FOR_CI = 10
+
+
+def sample_warning(trades: int) -> str | None:
+    """A plain warning when there are too few trades for the results to mean much."""
+    if trades < 10:
+        return "Critically low trade sample (< 10). Performance metrics are statistically meaningless."
+    if trades < 30:
+        return "Small trade sample (< 30). High variance; results cannot reliably prove an edge."
+    return None
+
+
+def t_crit_95(df: int) -> float:
+    """Two-sided 95% Student's t critical value (Cornish-Fisher expansion, within 0.001 for df >= 9)."""
+    z, v = 1.959963984540054, float(df)
+    return (z + (z**3 + z) / (4 * v) + (5 * z**5 + 16 * z**3 + 3 * z) / (96 * v**2)
+            + (3 * z**7 + 19 * z**5 + 17 * z**3 - 15 * z) / (384 * v**3))
+
+
+def sharpe_ci(trades: pd.DataFrame, equity: pd.Series, timeframe: str, sharpe: float | None) -> list[float] | None:
+    """95% range for the headline Sharpe ratio, driven by the number of trades.
+
+    The headline ratio is measured candle by candle, but its uncertainty comes from how few
+    independent trades produced those candles. So: a Student's t range on the mean trade
+    return (each trade's profit as a fraction of the balance before it, n - 1 degrees of
+    freedom), carried into the candle-based ratio. The trades' summed return spread over
+    N candles moves the mean candle return by n * d / N for a shift d in the mean trade,
+    giving half-width t * sd_trade * sqrt(n) / (N * sd_candle) * sqrt(candles a year).
+    None under 10 trades, or when there's no Sharpe ratio to put a range around."""
+    n = len(trades)
+    if sharpe is None or n < MIN_TRADES_FOR_CI or "equity_after" not in trades:
+        return None
+    before = trades["equity_after"] - trades["pnl"]
+    tr = (trades["pnl"] / before.where(before > 0)).dropna().to_numpy(dtype=float)
+    r = equity.pct_change().dropna().to_numpy(dtype=float)
+    if len(tr) < MIN_TRADES_FOR_CI or len(r) < 2:
+        return None
+    sd_t, sd_c = float(tr.std(ddof=1)), float(r.std(ddof=1))
+    if not (sd_t > 0 and sd_c > 0):
+        return None
+    scale = float(np.sqrt(bars_per_year(equity.index, timeframe)))
+    half = t_crit_95(len(tr) - 1) * sd_t * np.sqrt(len(tr)) / (len(r) * sd_c) * scale
+    return [float(sharpe - half), float(sharpe + half)]
 
 
 def longest_underwater_days(equity: pd.Series) -> float:
