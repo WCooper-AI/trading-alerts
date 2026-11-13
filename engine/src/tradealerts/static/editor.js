@@ -287,8 +287,11 @@ function numberInput(value, onSet, { label, step = "any", min = null, integer = 
     const n = Number(raw);
     const bad = Number.isNaN(n) || (integer && !Number.isInteger(n)) || (min !== null && n < Number(min));
     el.setAttribute("aria-invalid", String(bad));
+    el.setCustomValidity(!bad ? "" : Number.isNaN(n) ? "Enter a number"
+      : integer && !Number.isInteger(n) ? "Enter a whole number" : `Must be at least ${min}`);
     if (!bad) onSet(n);
   });
+  el.addEventListener("change", () => { if (el.getAttribute("aria-invalid") === "true") el.reportValidity(); });
   mark();
   return el;
 }

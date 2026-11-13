@@ -80,7 +80,8 @@ async function viewNews() {
     const next = all.find((e) => e.impact === "high" && new Date(e.time) > Date.now() - 60000 &&
       (!state.currencies.size || state.currencies.has(e.currency)));
     if (!next) {
-      hero.appendChild(h("section", { class: "section" }, h("p", { class: "muted" }, "No high-impact news coming up in the calendar.")));
+      hero.appendChild(h("section", { class: "section" }, h("p", { class: "muted" }, state.currencies.size ? "No high-impact news coming up for the chosen currencies. Lower-impact events are listed below."
+        : "No high-impact news coming up in the calendar. Lower-impact events are listed below.")));
       return;
     }
     append(hero, [h("section", { class: "section hero-row" },
