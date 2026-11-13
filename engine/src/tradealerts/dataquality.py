@@ -41,7 +41,8 @@ def check(df: pd.DataFrame, timeframe: str, now=None) -> list[dict]:
     """Warnings about the frame, each {"kind", "text", "count"}; empty when it looks fine.
 
     kinds: "gap" (missing candles, weekends ignored), "stale" (last bar well behind now),
-    "zero_volume" (a run of candles with no volume, or no price movement when there's no volume column).
+    "zero_volume" (a run of candles with no volume, or no price movement when there's no volume column),
+    "repaired" (candles with impossible high/low values that were widened when loaded).
     """
     out: list[dict] = []
     if df is None or len(df) < 2 or not isinstance(df.index, pd.DatetimeIndex):
@@ -98,4 +99,11 @@ def check(df: pd.DataFrame, timeframe: str, now=None) -> list[dict]:
             out.append({"kind": "zero_volume", "count": len(runs),
                         "text": (f"{len(runs)} stretch{'es' if len(runs) != 1 else ''} of candles with {what}, the longest "
                                  f"{e - s + 1} candles from {_fmt(idx[s])} UTC. Those are filler, not real trading.")})
+
+    # candles whose high/low didn't contain the open/close, widened when loaded (data.normalise)
+    repaired = int(df.attrs.get("repaired_bars", 0) or 0)
+    if repaired:
+        out.append({"kind": "repaired", "count": repaired,
+                    "text": (f"{repaired} candle{'s' if repaired != 1 else ''} had a high below the open, close or low "
+                             "(or a low above them) and were widened to fit. The source data has bad ticks there.")})
     return out

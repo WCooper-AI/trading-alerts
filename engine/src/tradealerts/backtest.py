@@ -138,6 +138,7 @@ def compute_metrics(strategy: Strategy, trades: pd.DataFrame, equity: pd.Series,
         "start": str(df.index[0]),
         "end": str(df.index[-1]),
         "bars": len(df),
+        "repaired_bars": int(df.attrs.get("repaired_bars", 0) or 0),
         "start_equity": start_eq,
         "end_equity": float(equity.iloc[-1]),
         "total_return_pct": (float(equity.iloc[-1]) / start_eq - 1) * 100,
@@ -226,19 +227,34 @@ def hold_histogram(trades: pd.DataFrame) -> list[dict]:
     return histogram(hold_times(trades).to_numpy(dtype=float), HOLD_EDGES_HOURS)
 
 
+def bars_per_year(index: pd.Index, timeframe: str) -> float:
+    """Candles in a year, for annualising. Daily and longer: 252 trading days (365 for weekly
+    and up), unchanged. Intraday: 252 days times the candles actually seen per weekday, capped
+    at a full 24 hours' worth, so a market open 6.5 h a day isn't counted as trading 24 h.
+    24 h markets (FX, crypto) hit the cap and keep 252 x 24 h."""
+    bar = timeframes.to_timedelta(timeframe)
+    if bar > pd.Timedelta(days=1):
+        return pd.Timedelta(days=365) / bar
+    full = pd.Timedelta(days=1) / bar
+    if bar < pd.Timedelta(days=1) and isinstance(index, pd.DatetimeIndex) and len(index) >= 2:
+        first, last = index[0].date(), index[-1].date()
+        weekdays = int(np.busday_count(first, last + pd.Timedelta(days=1)))
+        if weekdays > 0:
+            full = min(full, len(index) / weekdays)
+    return 252 * full
+
+
 def risk_ratios(equity: pd.Series, timeframe: str) -> dict:
     """Sharpe and Sortino ratios from candle-to-candle changes in the balance, annualised
-    assuming the market trades about 252 days a year. None when there is too little
-    variation to measure (e.g. no trades)."""
+    assuming the market trades about 252 days a year (see ``bars_per_year``). None when
+    there is too little variation to measure (e.g. no trades)."""
     out = {"sharpe": None, "sortino": None}
     if len(equity) < 3:
         return out
     r = equity.pct_change().dropna().to_numpy(dtype=float)
     if len(r) < 2:
         return out
-    bar = timeframes.to_timedelta(timeframe)
-    per_year = (pd.Timedelta(days=252) / bar) if bar <= pd.Timedelta(days=1) else (pd.Timedelta(days=365) / bar)
-    scale = float(np.sqrt(per_year))
+    scale = float(np.sqrt(bars_per_year(equity.index, timeframe)))
     mean = float(r.mean())
     sd = float(r.std(ddof=1))
     if sd > 0:

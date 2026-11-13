@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -246,6 +247,11 @@ def _check_keys(d: dict, allowed: set[str], path: str):
         )
 
 
+def _whole(v) -> bool:
+    """A real whole number: YAML ``true``/``false`` are ints in Python but not accepted."""
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
 def _number(v, path, minimum=None, allow_none=False):
     if (v is None or v == "") and allow_none:
         return None
@@ -253,6 +259,8 @@ def _number(v, path, minimum=None, allow_none=False):
         raise StrategyError(f"{path}: fill this in")
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         raise StrategyError(f"{path} must be a number, got {v!r}")
+    if not math.isfinite(v):
+        raise StrategyError(f"{path} must be a finite number")
     if minimum is not None and v < minimum:
         raise StrategyError(f"{path} must be at least {minimum}, got {v}")
     return float(v)
@@ -275,7 +283,7 @@ def _level_spec(spec, path, allow_r=False):
         p = spec["atr_period"]
         if p is None or p == "":
             raise StrategyError(f"{path}.atr_period: fill this in")
-        if not isinstance(p, int) or p < 1:
+        if not _whole(p) or p < 1:
             raise StrategyError(f"{path}.atr_period must be a whole number of 1 or more")
     return spec
 
@@ -312,7 +320,7 @@ def strategy_from_dict(data: dict, sid: str = "", path: Path | None = None, raw_
     if alignment not in ("new_york", "utc"):
         raise StrategyError("market.candle_alignment must be new_york or utc")
     lookback = m.get("lookback_days")
-    if lookback is not None and (not isinstance(lookback, int) or lookback < 1):
+    if lookback is not None and (not _whole(lookback) or lookback < 1):
         raise StrategyError("market.lookback_days must be a whole number of days")
     market = Market(
         symbol=str(_require(m, "symbol", "market")),
@@ -340,7 +348,7 @@ def strategy_from_dict(data: dict, sid: str = "", path: Path | None = None, raw_
     stop = _level_spec(ex["stop"], "exit.stop")
     target = _level_spec(ex["target"], "exit.target", allow_r=True) if ex.get("target") else None
     max_bars = ex.get("max_bars")
-    if max_bars is not None and (not isinstance(max_bars, int) or max_bars < 1):
+    if max_bars is not None and (not _whole(max_bars) or max_bars < 1):
         raise StrategyError("exit.max_bars must be a whole number of 1 or more")
 
     r = data.get("risk") or {}

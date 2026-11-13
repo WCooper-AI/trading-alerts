@@ -23,9 +23,25 @@ def _src(df: pd.DataFrame, source: str) -> pd.Series:
 
 
 def _period(p, name="period") -> int:
-    if int(p) != p or int(p) < 1:
+    if isinstance(p, bool) or not np.isfinite(p) or int(p) != p or int(p) < 1:
         raise ValueError(f"{name} must be a whole number of 1 or more, got {p!r}")
     return int(p)
+
+
+def wilder_smooth(series: pd.Series, period: int) -> pd.Series:
+    """Welles Wilder's smoothing (TradingView ``ta.rma``, TA-Lib RSI/ATR): the first value is the
+    plain average of the first ``period`` values, then S = S_prev + (x - S_prev) / period.
+    NaN until ``period`` values have been seen; uses only the current and earlier values."""
+    p = _period(period)
+    out = pd.Series(np.nan, index=series.index, dtype=float)
+    valid = np.flatnonzero(series.notna().to_numpy())
+    if len(valid) < p:
+        return out
+    seed_at = valid[p - 1]
+    seeded = series.iloc[seed_at:].astype(float).copy()
+    seeded.iloc[0] = float(series.iloc[valid[:p]].mean())
+    out.iloc[seed_at:] = seeded.ewm(alpha=1 / p, adjust=False).mean().to_numpy()
+    return out
 
 
 # --------------------------------------------------------------------------- trend
@@ -70,8 +86,8 @@ def rsi(df, period=14, source="close"):
     """Wilder's RSI, 0-100."""
     p = _period(period)
     delta = _src(df, source).diff()
-    gain = delta.clip(lower=0).ewm(alpha=1 / p, adjust=False, min_periods=p).mean()
-    loss = (-delta.clip(upper=0)).ewm(alpha=1 / p, adjust=False, min_periods=p).mean()
+    gain = wilder_smooth(delta.clip(lower=0), p)
+    loss = wilder_smooth(-delta.clip(upper=0), p)
     rs = gain / loss.replace(0, np.nan)
     out = 100 - 100 / (1 + rs)
     out = out.where(loss != 0, 100.0)
@@ -107,7 +123,7 @@ def true_range(df):
 def atr(df, period=14):
     """Average true range (Wilder smoothing), in price points."""
     p = _period(period)
-    return true_range(df).ewm(alpha=1 / p, adjust=False, min_periods=p).mean()
+    return wilder_smooth(true_range(df), p)
 
 
 def atr_pct(df, period=14):

@@ -1,3 +1,19 @@
+# Changes in 0.3.1 (reliability patch)
+
+- **RSI and ATR use exact Wilder smoothing.** The first value is the average of the first
+  `period` values, then Wilder's recursion, matching TradingView and TA-Lib (checked against
+  the StockCharts RSI table). Values differ slightly from 0.3.0 in the first few dozen candles.
+- **Intraday Sharpe and Sortino suit session-limited markets.** Bars per year come from the
+  candles actually seen per weekday (capped at 24 h), so hourly US stocks count about 7 bars
+  a day, not 24. FX, crypto, daily and longer timeframes are unchanged.
+- **Monte Carlo adds trade results when compounding is off.** With `risk: compound: false`
+  the reshuffled paths add each trade's money result instead of compounding its % gain.
+- Candles with an impossible high/low are still repaired, but now counted: `repaired_bars`
+  in backtest metrics and a "repaired" data-quality warning.
+- Spreads that are negative or infinite are rejected; crossed broker quotes count as 0.
+- Strategy numbers must be finite (`.nan` / `.inf` rejected), and whole-number fields no
+  longer accept `true`.
+
 # Changes in 0.2
 
 ## Self-hosted setup
