@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import shutil
 import sys
 from importlib import resources
 from pathlib import Path
@@ -321,7 +320,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("serve", help="open the web interface (also runs live checks)")
     s.add_argument("--host", default="127.0.0.1", help="address to listen on (default: localhost only)")
-    s.add_argument("--port", type=int, default=8321)
+    s.add_argument("--port", type=int, default=8321, help="port to listen on (0 = any free port)")
     s.add_argument("--no-runner", action="store_true", help="web interface only, no live checks")
     s.add_argument("--no-auth", action="store_true",
                    help="skip the password (only if a reverse proxy already handles sign-in)")

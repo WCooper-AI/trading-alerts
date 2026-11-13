@@ -1,4 +1,3 @@
-import math
 
 import pandas as pd
 import pytest
@@ -6,7 +5,7 @@ import pytest
 from tradealerts.backtest import compute_metrics, run_backtest
 from tradealerts.risk import position_size
 from tradealerts.simulator import Simulator
-from tradealerts.strategy import SkipTrade, StrategyError, strategy_from_dict
+from tradealerts.strategy import SkipTrade, StrategyError
 
 from .conftest import make_bars, make_strategy
 

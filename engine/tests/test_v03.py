@@ -282,7 +282,7 @@ def test_status_dashboard_and_strategies_agree_on_each_tests_state(client, ws, m
     states = lambda: (  # noqa: E731
         client.get("/api/status").json()["states"],
         client.get("/api/dashboard").json()["running"][0]["health"],
-        client.get(f"/api/strategies").json()["strategies"][0]["live"]["run"]["health"],
+        client.get("/api/strategies").json()["strategies"][0]["live"]["run"]["health"],
         client.get(f"/api/runs/{run['id']}").json()["health"],
     )
     # no live checker in the test app: every view says the test needs attention
@@ -558,7 +558,6 @@ def test_why_no_trades_counts_each_condition(client):
 
 
 def test_why_no_trades_walks_nested_groups():
-    import pandas as pd
     from tradealerts.analysis import condition_counts
     from tradealerts.sample import synthetic_bars
 

@@ -4,7 +4,6 @@ import io
 import json
 import urllib.error
 
-import numpy as np
 import pandas as pd
 import pytest
 

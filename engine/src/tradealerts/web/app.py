@@ -11,6 +11,8 @@ import hashlib
 import logging
 import os
 import re
+import socket
+import sys
 import threading
 import time
 from importlib import resources
@@ -167,6 +169,31 @@ def _parent_alive(pid: int) -> bool:
     return True
 
 
+def bind_socket(host: str, port: int, fallback: bool = False) -> socket.socket:
+    """Bind the listening socket before starting uvicorn, so the real port is known up front.
+
+    Port 0 lets the OS pick a free port. With ``fallback``, a port that's already taken falls
+    back to one the OS picks instead of failing (the desktop app reads the real port from stdout).
+    """
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_STREAM)
+    if sys.platform != "win32":  # on Windows this would let two servers share a port
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        try:
+            sock.bind((host, port))
+        except OSError:
+            if not (fallback and port):
+                raise
+            log.warning("Port %s is in use; letting the system pick a free one", port)
+            sock.bind((host, 0))
+    except OSError as e:
+        sock.close()
+        raise SystemExit(f"Couldn't listen on {host}:{port} ({e}). Try another --port, or --port 0.")
+    sock.set_inheritable(True)
+    return sock
+
+
 def serve(config_path: str | None, host: str, port: int, run_live: bool = True, no_auth: bool = False,
           desktop: bool = False, parent_pid: int | None = None) -> None:
     import uvicorn
@@ -184,6 +211,8 @@ def serve(config_path: str | None, host: str, port: int, run_live: bool = True, 
             f"Refusing to listen on {host} without a password. Set TRADEALERTS_PASSWORD, or pass "
             "--no-auth if a reverse proxy (e.g. Caddy basic auth) already protects it."
         )
+    sock = bind_socket(host, port, fallback=desktop)
+    port = sock.getsockname()[1]
     path = config_path or "config.yaml"
     runner = LiveRunner(Workspace(Path(path))).start() if run_live else None
     # On this computer only, refuse requests addressed to any other host name (DNS rebinding).
@@ -202,11 +231,13 @@ def serve(config_path: str | None, host: str, port: int, run_live: bool = True, 
                 time.sleep(2)
         threading.Thread(target=watch, name="parent-watch", daemon=True).start()
     shown = "localhost" if loopback else host
+    print(f"TRADEALERTS_PORT={port}", flush=True)  # handshake read by the desktop app
     print(f"Trading Alerts is running at http://{shown}:{port}  (Ctrl+C to stop)", flush=True)
     if not run_live:
         print("Live checks are off (--no-runner).")
     try:
-        server.run()
+        server.run(sockets=[sock])
     finally:
+        sock.close()
         if runner:
             runner.stop()

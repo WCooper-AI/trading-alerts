@@ -1,6 +1,5 @@
 """0.3 session 8B: optimiser (cross product, caps, shared indicator cache) and job progress/cancel."""
 import copy
-import threading
 import time
 
 import pytest
@@ -238,7 +237,6 @@ def test_optimise_endpoint_rejects_bad_requests(client):
 
 
 def test_optimise_endpoint_enforces_edition_cap(client):
-    ctx = client.app.state.ctx if hasattr(client.app.state, "ctx") else None
     b = {"data": CSV_STRATEGY, "settings": [
         {"setting": {"kind": "path", "path": ["entry", "all", 0, "right"]}, "values": list(range(20, 45))},   # 25
         {"setting": {"kind": "path", "path": ["exit", "stop", "atr"]}, "values": [1 + i / 10 for i in range(25)]},  # 25

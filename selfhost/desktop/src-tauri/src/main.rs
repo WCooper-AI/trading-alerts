@@ -1,8 +1,8 @@
 // Trading Alerts desktop app.
 //
 // A small native shell around the same engine that `tradealerts serve` runs. On launch it
-// starts the engine on a free local port (bound to this computer only), shows a splash
-// screen until the engine answers, then loads the interface in a native window.
+// starts the engine on a local port (bound to this computer only), reads the port it actually
+// bound from its first line of output, shows a splash screen until the engine answers, then loads the interface in a native window.
 //
 // Forward tests and alerts need the engine running, so closing the window while any are
 // running keeps the app in the system tray. Quit from the tray (or Cmd+Q on a Mac) stops
@@ -11,10 +11,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::fs::{self, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{self, Receiver};
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -28,6 +29,9 @@ use tauri_plugin_opener::OpenerExt;
 
 const FIRST_PORT: u16 = 47821;
 const START_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long to wait for the engine's `TRADEALERTS_PORT=` line before assuming the port we asked for.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(60);
+const HANDSHAKE: &str = "TRADEALERTS_PORT=";
 
 #[derive(Default)]
 struct Engine {
@@ -43,6 +47,7 @@ fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 /// Same port as last time when it's free, so the interface keeps its saved preferences.
+/// Only a preference: the engine binds it itself and picks another if it was taken meanwhile.
 fn pick_port() -> u16 {
     for p in FIRST_PORT..FIRST_PORT + 50 {
         if TcpListener::bind(("127.0.0.1", p)).is_ok() {
@@ -71,7 +76,30 @@ fn engine_command(app: &AppHandle) -> Command {
     }
 }
 
-fn start_engine(app: &AppHandle, port: u16) -> Result<Child, String> {
+/// Copies the engine's output to the log, reporting the port from its handshake line.
+/// Keeps draining after that so the engine never blocks on a full pipe.
+fn watch_stdout(out: impl Read + Send + 'static, mut log: fs::File) -> Receiver<u16> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut reader = BufReader::new(out);
+        let mut line = Vec::new();
+        let mut tx = Some(tx);
+        while matches!(reader.read_until(b'\n', &mut line), Ok(n) if n > 0) {
+            if let Some(sender) = &tx {
+                let text = String::from_utf8_lossy(&line);
+                if let Some(port) = text.trim().strip_prefix(HANDSHAKE).and_then(|p| p.parse().ok()) {
+                    let _ = sender.send(port);
+                    tx = None;
+                }
+            }
+            let _ = log.write_all(&line);
+            line.clear();
+        }
+    });
+    rx
+}
+
+fn start_engine(app: &AppHandle, port: u16) -> Result<(Child, Receiver<u16>), String> {
     let dir = data_dir(app)?;
     let log_path = dir.join("engine.log");
     let log = OpenOptions::new()
@@ -91,19 +119,21 @@ fn start_engine(app: &AppHandle, port: u16) -> Result<Child, String> {
         .arg(std::process::id().to_string())
         .current_dir(&dir)
         .stdin(Stdio::null())
-        .stdout(log)
+        .stdout(Stdio::piped())
         .stderr(err_log);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no console window
     }
-    cmd.spawn().map_err(|e| {
+    let mut child = cmd.spawn().map_err(|e| {
         format!(
             "Couldn't start the Trading Alerts engine ({e}). If you're running from source, install it \
              first (pipx install .) or set TRADEALERTS_ENGINE."
         )
-    })
+    })?;
+    let out = child.stdout.take().ok_or("The engine's output wasn't available")?;
+    Ok((child, watch_stdout(out, log)))
 }
 
 /// Minimal HTTP/1.1 request to the local engine. Returns the response body.
@@ -153,11 +183,14 @@ fn show_error(app: &AppHandle, message: &str) {
 }
 
 fn boot(app: AppHandle) {
-    let port = pick_port();
-    let child = match start_engine(&app, port) {
+    let wanted = pick_port();
+    let (child, handshake) = match start_engine(&app, wanted) {
         Ok(c) => c,
         Err(e) => return show_error(&app, &e),
     };
+    // An older engine without the handshake (or one that exits early) means the port we asked for;
+    // the loop below then reports whether it's answering.
+    let port = handshake.recv_timeout(HANDSHAKE_TIMEOUT).unwrap_or(wanted);
     {
         let state = app.state::<Engine>();
         *state.child.lock().unwrap() = Some(child);
