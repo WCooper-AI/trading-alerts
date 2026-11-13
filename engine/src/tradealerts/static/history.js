@@ -47,6 +47,24 @@ function renderDiff(rows, context = 3) {
   return list;
 }
 
+/** Every setting as "path → value", so versions compare by meaning, not by line order. */
+function flatSettings(v, path = "", out = {}) {
+  if (v && typeof v === "object") {
+    const entries = Array.isArray(v) ? v.map((x, i) => [`rule ${i + 1}`, x]) : Object.entries(v);
+    for (const [k, x] of entries) flatSettings(x, path ? `${path} › ${k}` : k, out);
+  } else out[path] = String(v);
+  return out;
+}
+
+/** Plain list of the settings that differ between two versions' parsed data. */
+function renderSettingChanges(before, after) {
+  const a = flatSettings(before || {}), b = flatSettings(after || {});
+  const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((k) => a[k] !== b[k]);
+  if (!keys.length) return h("p", { class: "muted" }, "No differences.");
+  return h("ul", { class: "setting-changes" }, keys.map((k) => h("li", {}, h("strong", {}, k.replace(/_/g, " ")), ": ",
+    k in a ? a[k] : "(not set)", " → ", k in b ? b[k] : "(removed)")));
+}
+
 function versionSentence(data) {
   try {
     const d = clone(data);
@@ -85,8 +103,11 @@ async function viewHistory(id) {
           onclick: () => { against = k; show(no); } }, label)));
     let diff;
     if (!base) diff = h("p", { class: "muted" }, "This is the earliest version kept, so there's nothing to compare it with.");
-    else if (against === "current" && no !== current) diff = renderDiff(lineDiff(v.yaml, base.yaml));
-    else diff = renderDiff(lineDiff(base.yaml, v.yaml));
+    else {
+      const [from, to] = against === "current" && no !== current ? [v, base] : [base, v];
+      diff = h("div", {}, renderSettingChanges(from.data, to.data),
+        h("details", {}, h("summary", { class: "small" }, "Show the file changes"), renderDiff(lineDiff(from.yaml, to.yaml))));
+    }
     const restore = no === current ? null : h("button", { type: "button", class: "primary", onclick: async () => {
       const r = await attempt(() => withRunningChoice((onRunning) =>
         POST(`/strategies/${encodeURIComponent(id)}/versions/${no}/restore`, { on_running: onRunning }),

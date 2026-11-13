@@ -32,7 +32,7 @@ async function journalDialog(entry, onSaved, prefill = null) {
       "aria-pressed": String(e.direction === v), onclick: () => { e.direction = v; renderDir(); } }, t));
   };
   renderDir();
-  const dt = (key) => h("input", { type: "datetime-local", value: toLocalInput(e[key]), "aria-label": key,
+  const dt = (key) => h("input", { type: "datetime-local", value: toLocalInput(e[key]), "aria-label": key === "entry_time" ? "Opened" : "Closed",
     oninput: (ev) => { e[key] = ev.target.value ? new Date(ev.target.value).toISOString() : null; } });
   const n = (key, label, opts = {}) => numberInput(e[key], (v) => { e[key] = v; }, { label, step: "any", min: "0", ...opts });
   const cur = choiceSelect([["GBP", "GBP"], ["USD", "USD"], ["EUR", "EUR"]], e.currency, (v) => { e.currency = v; }, { label: "Currency" });
@@ -94,6 +94,10 @@ async function journalDialog(entry, onSaved, prefill = null) {
     const body = { ...e, market: marketSel.value === "__other" ? other.value.trim() : marketSel.value,
       paper_trade_id: paper.value ? Number(paper.value) : null, notes: notes.value, tags: tags.value, setup: setup.value,
       followed_plan: e.followed_plan === undefined ? null : e.followed_plan, mood: e.mood || null };
+    const missing = [[!body.market, "the market"], [!body.direction, "buy or sell"], [!body.entry_time, "when you opened it"],
+      [isBlank(body.entry_price), "the entry price"], [isBlank(body.size), "the size"], [!body.currency, "the currency"]]
+      .filter(([m]) => m).map(([, t]) => t);
+    if (missing.length) { err.textContent = "Still to fill in: " + missing.join(", "); return; }
     try {
       if (entry) await PUT(`/journal/${entry.id}`, body); else await POST("/journal", body);
       dlg.close(); toast(entry ? "Trade updated" : "Trade added"); onSaved();

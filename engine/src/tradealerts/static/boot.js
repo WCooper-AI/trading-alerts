@@ -156,7 +156,11 @@ async function route() {
     else if (parts[0] === "settings") { app.guard = null; await viewSettings(); }
     else if (parts[0] === "account" && window.cloudAccount) await window.cloudAccount.viewAccount(parts[1]);
     else if ((parts[0] === "verify" || parts[0] === "reset") && parts[1] && window.cloudAccount) await window.cloudAccount.viewLink(parts[0], parts[1]);
-    else { app.guard = null; await viewDashboard(); }
+    else {
+      app.guard = null;
+      await viewDashboard();
+      if (parts[0]) toast("That page doesn't exist, so you're on the dashboard", true);
+    }
     clearTimeout(skel);
     lastHash = location.hash;
     $main.classList.remove("enter");

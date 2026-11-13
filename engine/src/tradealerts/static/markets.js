@@ -89,7 +89,7 @@ async function viewMarkets() {
       status.appendChild(feedBadge(d));
       clear(qualityBox);
       if (d.quality && d.quality.length) qualityBox.appendChild(h("ul", { class: "warnings quality-strip", "aria-label": "Data quality warnings" },
-        d.quality.map((w) => h("li", {}, w.text))));
+        mergeGapNotes(d.quality).map((w) => h("li", {}, w.text))));
       if (alertList.update) alertList.update(d);
       if (!chart) {
         chart = candleChart(d, { onPick: (p) => pricePick.set && pricePick.set(p), title: d.label });
@@ -148,7 +148,10 @@ async function viewMarkets() {
     const add = h("button", { class: "primary", type: "button" }, editing ? "Save changes" : "Add alert");
     const cancel = editing ? h("button", { type: "button", onclick: () => renderAlerts() }, "Cancel") : null;
     add.addEventListener("click", async () => {
-      if (isBlank(price)) { toast("Fill in the price, or click the chart", true); return; }
+      if (isBlank(price)) {
+        priceIn.setAttribute("aria-invalid", "true"); priceIn.focus();
+        toast("Fill in the price, or click the chart", true); return;
+      }
       if (opts.repeat === "every" && isBlank(opts.cooldown)) { toast("Fill in the cooldown", true); return; }
       const body = { market, direction: dir.v, price, note: note.value, repeat: opts.repeat, cooldown_minutes: opts.cooldown || 0, cross: opts.cross };
       try {
@@ -192,6 +195,9 @@ async function viewMarkets() {
     append(alertsBox, [
       h("section", { class: "section" }, h("h2", {}, editing ? "Edit alert" : "Price alerts"),
         h("p", { class: "section-note" }, `Get a phone alert when ${marketByKey(market).label} reaches a price. Checked every ${res.poll_minutes} minutes by the live checker, on 5-minute candles, so a quick touch still counts.`),
+        ((app.status && app.status.channels) || []).some((c) => c !== "console") ? null
+          : h("p", { class: "small muted" }, "No alert channel is set up yet, so hits will only show in Activity. ",
+            h("a", { href: "#/settings" }, "Set one up in Settings"), "."),
         h("div", { class: "alert-form" }, dirSeg, h("div", { class: "inline" }, priceIn, add, cancel), crossLbl,
           h("div", { class: "inline" }, repeatSel, cooldownWrap), note)),
       h("section", { class: "section" },
@@ -454,4 +460,12 @@ async function viewMarketStats() {
   append(page, [head, h("div", { class: "panel live-controls stats-controls" }, marketSel, yearSeg), body]);
   clear($main).appendChild(page);
   load();
+}
+
+/** One line for price gaps: the "gap" note plus the weekday total from "missing_bars", instead of two notes on the same gaps. */
+function mergeGapNotes(list) {
+  const gap = list.find((w) => w.kind === "gap"), miss = list.find((w) => w.kind === "missing_bars");
+  if (!gap || !miss) return list;
+  const text = gap.text.replace(" UTC). ", ` UTC), about ${miss.count} weekday candles in all. `);
+  return list.filter((w) => w !== miss).map((w) => (w === gap ? { ...w, text } : w));
 }
