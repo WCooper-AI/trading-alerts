@@ -61,6 +61,7 @@ def normalise(df: pd.DataFrame, assume_tz: str = "UTC") -> pd.DataFrame:
     df = df.apply(pd.to_numeric, errors="coerce")
     df = df.dropna(subset=["open", "high", "low", "close"])
     df["volume"] = df["volume"].fillna(0.0)
+    disordered = int((df.index[1:] <= df.index[:-1]).sum()) if len(df) >= 2 else 0
     df = df[~df.index.duplicated(keep="last")].sort_index()
     df = df.astype(float)
     if not np.isfinite(df[OHLCV].to_numpy()).all():
@@ -85,6 +86,7 @@ def normalise(df: pd.DataFrame, assume_tz: str = "UTC") -> pd.DataFrame:
         df = df[~flat]
         repaired = repaired[~flat]
     df.attrs["repaired_bars"] = int(repaired.sum())
+    df.attrs["disordered_bars"] = disordered
     return df
 
 

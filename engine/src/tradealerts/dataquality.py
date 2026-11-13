@@ -70,7 +70,7 @@ def check(df: pd.DataFrame, timeframe: str, now=None, symbol: str = "") -> list[
     idx = df.index
     idx = idx.tz_localize("UTC") if idx.tz is None else idx.tz_convert("UTC")
     steps = idx[1:] - idx[:-1]
-    back = int((steps <= pd.Timedelta(0)).sum())  # earlier than, or the same as, the candle before
+    back = int(df.attrs.get("disordered_bars", 0) or 0) or int((steps <= pd.Timedelta(0)).sum())  # earlier than, or the same as, the candle before
     if back:
         out.append({"kind": "disordered", "count": back,
                     "text": (f"{back} candle{'s' if back != 1 else ''} came out of time order or repeated an "

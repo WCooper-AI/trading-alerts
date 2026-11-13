@@ -298,6 +298,10 @@ def risk_ratios(equity: pd.Series, timeframe: str, symbol: str = "") -> dict:
     if len(equity) < 3:
         return out
     r = equity.pct_change().dropna().to_numpy(dtype=float)
+    r = r[np.isfinite(r)]
+    if len(r) < 2:
+        return None
+    r = r[np.isfinite(r)]
     if len(r) < 2:
         return out
     scale = float(np.sqrt(bars_per_year(equity.index, timeframe, symbol=symbol)))
@@ -347,6 +351,9 @@ def sharpe_ci(trades: pd.DataFrame, equity: pd.Series, timeframe: str, sharpe: f
     before = trades["equity_after"] - trades["pnl"]
     tr = (trades["pnl"] / before.where(before > 0)).dropna().to_numpy(dtype=float)
     r = equity.pct_change().dropna().to_numpy(dtype=float)
+    r = r[np.isfinite(r)]
+    if len(r) < 2:
+        return None
     if len(tr) < MIN_TRADES_FOR_CI or len(r) < 2:
         return None
     sd_t, sd_c = float(tr.std(ddof=1)), float(r.std(ddof=1))

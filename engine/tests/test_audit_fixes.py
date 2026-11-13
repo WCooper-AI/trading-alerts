@@ -109,3 +109,17 @@ def test_dataquality_reports_weekend_gaps_for_crypto():
 
     btc_warnings = dataquality.check(df, "1h", now=mon[-1], symbol="BTC-USD")
     assert any(w["kind"] == "gap" for w in btc_warnings)
+
+
+def test_normalise_preserves_disordered_bars_for_dataquality():
+    idx = pd.to_datetime(
+        ["2025-01-06 02:00:00+00:00", "2025-01-06 00:00:00+00:00", "2025-01-06 01:00:00+00:00"]
+    )
+    df = pd.DataFrame(
+        {"open": [100.0, 100.0, 100.0], "high": [101.0, 101.0, 101.0], "low": [99.0, 99.0, 99.0], "close": [100.0, 100.0, 100.0], "volume": [10.0, 10.0, 10.0]},
+        index=idx,
+    )
+    norm = normalise(df)
+    assert norm.attrs["disordered_bars"] == 1
+    warnings = dataquality.check(norm, "1h", now=norm.index[-1])
+    assert any(w["kind"] == "disordered" for w in warnings)

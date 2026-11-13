@@ -759,7 +759,7 @@ function renderBacktest(res) {
     ["Largest win / loss", `${money(m.largest_win, sym)} / ${money(m.largest_loss, sym)}`],
     ["Longest winning / losing run", `${m.longest_winning_streak} / ${m.longest_losing_streak}`],
     ["Candles held on average", `${num(m.avg_bars_held, 1)} (${hours(m.avg_hold_hours)})`],
-    ["Sharpe (yearly)", num(m.sharpe) + (m.sharpe_ci ? ` (95% CI: ${num(m.sharpe_ci[0])} to ${num(m.sharpe_ci[1])})` : "")],
+    ["Sharpe (yearly)", num(m.sharpe) + (m.sharpe_ci ? ` (95% CI, approx. assuming independent trades: ${num(m.sharpe_ci[0])} to ${num(m.sharpe_ci[1])})` : "")],
     ["Sortino (yearly)", num(m.sortino)],
     ["Longest time below a previous high", `${num(m.longest_underwater_days, 1)} days`],
     ["How trades ended", Object.entries(m.exit_reasons || {}).map(([k, v]) => `${k.replace(/_/g, " ")} ${v}`).join(", ")],
