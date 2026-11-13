@@ -147,6 +147,8 @@ def compute_metrics(strategy: Strategy, trades: pd.DataFrame, equity: pd.Series,
         "trades": int(len(trades)),
         "total_funding": float(trades["funding"].sum()) if len(trades) else 0.0,
         "total_spread_cost": float(trades["spread_cost"].sum()) if len(trades) else 0.0,
+        "total_commission": float(trades["commission"].sum()) if len(trades) and "commission" in trades else 0.0,
+        "total_borrow": float(trades["borrow"].sum()) if len(trades) and "borrow" in trades else 0.0,
     }
     if len(trades):
         pnl = trades["pnl"]

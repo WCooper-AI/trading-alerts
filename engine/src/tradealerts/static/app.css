@@ -842,6 +842,8 @@ details[open] > :not(summary) { animation: rise .3s var(--ease) backwards; }
 .portfolio { display: grid; gap: .6rem; }
 .corr { margin-top: 1rem; display: grid; gap: .4rem; }
 .corr-table th { font-weight: 560; }
+.swatch { display: inline-block; width: .7em; height: .7em; border-radius: 50%; background: var(--swatch, currentColor); margin-right: .45em; vertical-align: baseline; }
+.legend { display: flex; flex-wrap: wrap; gap: .3rem 1rem; margin-top: .3rem; color: var(--muted); }
 .corr-pos { background: color-mix(in srgb, var(--loss) calc(var(--corr) * 30%), transparent); }
 .corr-neg { background: color-mix(in srgb, var(--gain) calc(var(--corr) * 30%), transparent); }
 .walk { display: grid; gap: .5rem; padding: 1rem; border-radius: 16px; background: var(--glass-thin); border: 1px solid var(--line-soft); }

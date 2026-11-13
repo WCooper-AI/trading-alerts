@@ -14,7 +14,10 @@ How trades are filled, modelled on a CFD/spread-bet broker:
 * An exit rule (``exit.when``) closes at the next candle's open; ``max_bars``
   closes at the close of the Nth candle held (the entry candle counts as 1).
 * Overnight funding is charged for each 22:00 UTC a position is held over, at
-  ``costs.funding_pct`` a year on the position's value.
+  ``costs.funding_pct`` a year on the position's value. Short positions also pay
+  ``costs.borrow_pct`` a year (stock borrow fee) over the same nights.
+* ``costs.commission`` (money) and ``costs.commission_pct`` (% of the fill's value)
+  are charged on the entry fill and again on the exit fill.
 
 State is a plain dict so live runs can save it to disk between checks.
 """
@@ -95,16 +98,29 @@ class Simulator:
         exit_px = price - self.s.sign * hs
         return (exit_px - p["entry_price"]) * self.s.sign * p["size"] * self.s.risk.point_value
 
+    def _nightly_pct(self) -> float:
+        """Yearly % charged per night held: funding, plus the borrow fee when short."""
+        return self.s.funding_pct + (self.s.borrow_pct if self.s.sign < 0 else 0.0)
+
+    def _commission(self, price: float, size: float) -> float:
+        """Cost of one fill at ``price``: a flat amount plus a % of the fill's value."""
+        s = self.s
+        return s.commission + price * size * s.risk.point_value * s.commission_pct / 100
+
     def _accrue_funding(self, until, price: float) -> None:
         p = self.state["position"]
-        if not p or not self.s.funding_pct:
+        rate = self._nightly_pct()
+        if not p or not rate:
             if p:
                 p["funded_until"] = str(until)
             return
         nights = nights_between(p["funded_until"], until)
         if nights:
-            cost = nights * price * p["size"] * self.s.risk.point_value * self.s.funding_pct / 100 / 365
+            value = price * p["size"] * self.s.risk.point_value
+            cost = nights * value * rate / 100 / 365
             p["funding"] = p.get("funding", 0.0) + cost
+            if self.s.sign < 0 and self.s.borrow_pct:
+                p["borrow"] = p.get("borrow", 0.0) + nights * value * self.s.borrow_pct / 100 / 365
             self.state["equity"] -= cost
         p["funded_until"] = str(until)
 
@@ -128,11 +144,13 @@ class Simulator:
         s = self.s
         gross = (exit_price - p["entry_price"]) * s.sign * p["size"] * s.risk.point_value
         funding = p.get("funding", 0.0)
-        pnl = gross - funding
+        commission = p.get("commission", 0.0) + self._commission(exit_price, p["size"])
+        pnl = gross - funding - commission
         risk_amount = abs(p["entry_price"] - p["stop"]) * p["size"] * s.risk.point_value
         exit_r = (exit_price - p["entry_price"]) * s.sign / abs(p["entry_price"] - p["stop"]) if p["stop"] != p["entry_price"] else 0.0
         spread_cost = (p.get("entry_half_spread", 0.0) + exit_half_spread) * p["size"] * s.risk.point_value
-        self.state["equity"] += gross  # funding was already taken night by night
+        # funding was already taken night by night and the entry commission on the fill
+        self.state["equity"] += gross - (commission - p.get("commission", 0.0))
         self.state["position"] = None
         self.state["pending_exit"] = False
         self.state["trades"] += 1
@@ -153,6 +171,8 @@ class Simulator:
             "equity_after": self.state["equity"],
             "funding": funding,
             "spread_cost": spread_cost,
+            "borrow": p.get("borrow", 0.0),
+            "commission": commission,
             "entry_reason": p.get("entry_reason") or {},
             "exit_values": getattr(self, "_values", {}) or {},
             # the closing candle may run on past the stop or target after the trade is out,
@@ -258,11 +278,13 @@ class Simulator:
                     "bars_held": 0,
                     "entry_half_spread": hs,
                     "funding": 0.0,
+                    "commission": self._commission(fill, size),
                     "funded_until": str(time),
                     "entry_reason": pend.get("reason") or {},
                     "mae_r": 0.0,  # worst point while open, in R (0 or below)
                     "mfe_r": 0.0,  # best point while open, in R (0 or above)
                 }
+                st["equity"] -= st["position"]["commission"]
                 events.append(Event("opened", time, {k: v for k, v in st["position"].items()
                                                      if k not in ("funded_until",)}))
 

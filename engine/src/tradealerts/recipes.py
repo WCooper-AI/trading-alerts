@@ -19,6 +19,8 @@ from typing import Any, Callable
 #   Ignored when the price data has its own bid/ask (OANDA).
 # point_value: money per 1.0 price move for 1 unit of size, so that size reads as "£ per point".
 # funding: rough yearly overnight funding %, a starting value to check with a broker.
+# borrow / commission (stocks): rough yearly borrow fee % for shorts, and money per fill.
+# exchange: exchange_calendars code for markets that only trade in exchange hours.
 # symbol / oanda: the market's name at each data source (chosen in Settings).
 MARKETS: list[dict[str, Any]] = [
     {"key": "us500", "news": ["USD"], "label": "US 500", "symbol": "ES=F", "dukascopy": "INSTRUMENT_IDX_AMERICA_E_SANDP_500", "oanda": "SPX500_USD", "funding": 6.0, "group": "Indices", "spread": 0.5, "point_value": 1,
@@ -45,6 +47,20 @@ MARKETS: list[dict[str, Any]] = [
      "point_value": 10000, "note": "Pound against the dollar. Size is per pip"},
     {"key": "btc", "news": ["USD"], "label": "Bitcoin", "symbol": "BTC-USD", "dukascopy": "INSTRUMENT_VCCY_BTC_USD", "oanda": "BTC_USD", "funding": 15.0, "group": "Crypto", "spread": 40, "point_value": 1,
      "note": "Trades 24 hours a day, 7 days a week"},
+    # Stocks: exchange-traded shares. Open only in exchange hours (see markethours), commission per
+    # fill at many brokers, and a borrow fee for short positions. Spreads are a few cents.
+    {"key": "spy", "news": ["USD"], "label": "S&P 500 ETF (SPY)", "symbol": "SPY", "dukascopy": "INSTRUMENT_ETF_CFD_US_SPY_US_USD", "oanda": None,
+     "funding": 6.0, "borrow": 0.5, "commission": 0.0, "group": "Stocks", "exchange": "XNYS", "spread": 0.02, "point_value": 1,
+     "note": "Tracks the S&P 500; trades in New York hours only"},
+    {"key": "aapl", "news": ["USD"], "label": "Apple (AAPL)", "symbol": "AAPL", "dukascopy": "INSTRUMENT_US_AAPL_US_USD", "oanda": None,
+     "funding": 6.0, "borrow": 0.5, "commission": 0.0, "group": "Stocks", "exchange": "XNYS", "spread": 0.02, "point_value": 1,
+     "note": "Trades in New York hours only"},
+    {"key": "msft", "news": ["USD"], "label": "Microsoft (MSFT)", "symbol": "MSFT", "dukascopy": "INSTRUMENT_US_MSFT_US_USD", "oanda": None,
+     "funding": 6.0, "borrow": 0.5, "commission": 0.0, "group": "Stocks", "exchange": "XNYS", "spread": 0.02, "point_value": 1,
+     "note": "Trades in New York hours only"},
+    {"key": "nvda", "news": ["USD"], "label": "Nvidia (NVDA)", "symbol": "NVDA", "dukascopy": "INSTRUMENT_US_NVDA_US_USD", "oanda": None,
+     "funding": 6.0, "borrow": 1.0, "commission": 0.0, "group": "Stocks", "exchange": "XNYS", "spread": 0.03, "point_value": 1,
+     "note": "Trades in New York hours only"},
 ]
 MARKETS_BY_KEY = {m["key"]: m for m in MARKETS}
 MARKETS_BY_SYMBOL = {m["symbol"]: m for m in MARKETS}
