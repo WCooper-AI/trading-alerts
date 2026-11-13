@@ -25,6 +25,15 @@ notifiers:
     enabled: false
     webhook_url: ""
 
+  - type: telegram           # bot from @BotFather; chat ID from @userinfobot
+    enabled: false
+    token: ""
+    chat_id: ""
+
+  - type: slack              # Slack incoming webhook (Mattermost works too)
+    enabled: false
+    webhook_url: ""
+
   - type: webhook            # POSTs {title, body, priority, tags} as JSON
     enabled: false
     url: ""

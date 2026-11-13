@@ -13,15 +13,16 @@ from datetime import datetime, timezone
 
 # filter -> event kinds in the events table
 CATEGORIES = {
-    "trades": ["opened", "closed"],
+    "trades": ["opened", "closed", "near_level"],
     "signals": ["signal"],
     "skipped": ["skipped"],
     "changes": ["strategy_saved", "settings_changed"],
-    "problems": ["alert_failed"],
+    "problems": ["alert_failed", "data_problem", "drawdown"],
 }
 EXTRA = {"price", "news"}  # categories that come from other tables
 KIND_TITLE = {"signal": "Rules met", "opened": "Trade opened", "closed": "Trade closed", "skipped": "Signal skipped",
-              "strategy_saved": "Strategy saved", "alert_failed": "Alert not sent"}
+              "strategy_saved": "Strategy saved", "alert_failed": "Alert not sent",
+              "data_problem": "Price data problem", "drawdown": "Drawdown limit hit", "near_level": "Near stop or target"}
 CATEGORY_OF = {kind: cat for cat, kinds in CATEGORIES.items() for kind in kinds}
 SEEN_KEY = "activity_seen"
 

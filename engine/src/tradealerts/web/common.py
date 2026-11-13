@@ -119,12 +119,15 @@ NOTIFIER_DEFAULTS = {
     "console": {"enabled": True},
     "ntfy": {"enabled": False, "server": "https://ntfy.sh", "topic": "", "token": ""},
     "discord": {"enabled": False, "webhook_url": ""},
+    "telegram": {"enabled": False, "token": "", "chat_id": ""},
+    "slack": {"enabled": False, "webhook_url": ""},
     "webhook": {"enabled": False, "url": ""},
     "email": {"enabled": False, "host": "", "port": "587", "security": "starttls", "username": "", "password": "",
               "sender": "", "to": ""},
 }
 SECRET_KEYS = {"password", "token"}  # never sent back to the browser; blank on save keeps the saved one
-REPORT_DEFAULTS = {"weekly": False, "day": "sun", "hour": 18, "tz": ""}
+REPORT_DEFAULTS = {"weekly": False, "day": "sun", "hour": 18, "tz": "",
+                   "daily": False, "daily_hour": 18, "drawdown_pct": 0, "near_pct": 0}
 DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 
@@ -193,6 +196,10 @@ def raw_from_settings(raw: dict, settings: dict, ws: Workspace | None = None) ->
                 err(422, "Add an ntfy topic, or turn ntfy off")
             if kind == "discord" and not spec.get("webhook_url"):
                 err(422, "Add a Discord webhook URL, or turn Discord off")
+            if kind == "telegram" and not (spec.get("token") and spec.get("chat_id")):
+                err(422, "Add your Telegram bot token and chat ID, or turn Telegram off")
+            if kind == "slack" and not spec.get("webhook_url"):
+                err(422, "Add a Slack webhook URL, or turn Slack off")
             if kind == "webhook" and not spec.get("url"):
                 err(422, "Add a webhook URL, or turn the webhook off")
             if kind == "email" and not (spec.get("host") and spec.get("to")):
@@ -229,7 +236,16 @@ def raw_from_settings(raw: dict, settings: dict, ws: Workspace | None = None) ->
             zoneinfo.ZoneInfo(tz)
         except (zoneinfo.ZoneInfoNotFoundError, ValueError):
             err(422, "Unknown time zone for the weekly report")
-    out["report"] = {"weekly": bool(rep.get("weekly")), "day": rep["day"], "hour": hour}
+    daily_hour = rep.get("daily_hour", 18)
+    if isinstance(daily_hour, bool) or not isinstance(daily_hour, int) or not 0 <= daily_hour <= 23:
+        err(422, "The daily summary hour must be between 0 and 23")
+    dd = number(rep, "drawdown_pct", "drawdown limit", required=False, exclusive=False)
+    near = number(rep, "near_pct", "near-level distance", required=False, exclusive=False)
+    if dd >= 100 or near >= 100:
+        err(422, "Drawdown limit and near-level distance must be below 100%")
+    out["report"] = {"weekly": bool(rep.get("weekly")), "day": rep["day"], "hour": hour,
+                     "daily": bool(rep.get("daily")), "daily_hour": daily_hour,
+                     "drawdown_pct": dd or 0, "near_pct": near or 0}
     if tz:
         out["report"]["tz"] = tz
     out["data"] = {"source": source, "oanda_environment": env}

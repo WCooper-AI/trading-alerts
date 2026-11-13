@@ -183,6 +183,13 @@ function reportSection(s) {
   const hour = h("select", { "aria-label": "Time", onchange: (e) => { r.hour = Number(e.target.value); } },
     Array.from({ length: 24 }, (_, i) => h("option", { value: i }, `${String(i).padStart(2, "0")}:00`)));
   hour.value = String(r.hour);
+  const dailyHour = h("select", { "aria-label": "Daily summary time", onchange: (e) => { r.daily_hour = Number(e.target.value); } },
+    Array.from({ length: 24 }, (_, i) => h("option", { value: i }, `${String(i).padStart(2, "0")}:00`)));
+  dailyHour.value = String(r.daily_hour ?? 18);
+  const pctField = (key, label, note) => h("div", { class: "field" }, h("label", {}, label),
+    h("input", { type: "number", min: 0, max: 99, step: "any", value: r[key] ?? 0,
+      oninput: (e) => { r[key] = e.target.value === "" ? 0 : Number(e.target.value); } }),
+    h("p", { class: "small muted" }, note));
   const zones = [...new Set([r.tz, Intl.DateTimeFormat().resolvedOptions().timeZone, ...app.meta.timezones].filter(Boolean))];
   const tz = h("select", { "aria-label": "Time zone", onchange: (e) => { r.tz = e.target.value; } },
     h("option", { value: "" }, isHosted() ? "UK time" : "This computer's time"), zones.map((z) => h("option", { value: z }, z.replace(/_/g, " "))));
@@ -196,7 +203,16 @@ function reportSection(s) {
     h("label", { class: "check" }, h("input", { type: "checkbox", checked: r.weekly, onchange: (e) => { r.weekly = e.target.checked; } }), "Send me a weekly report"),
     h("div", { class: "inline check-row" }, h("span", { class: "word" }, "Every"), day, h("span", { class: "word" }, "at"), hour, tz),
     h("div", { class: "inline check-row" }, reportLink, sendBtn),
-    h("p", { class: "after-note" }, "The report page has a Print button: choose Save as PDF to keep a copy."));
+    h("p", { class: "after-note" }, "The report page has a Print button: choose Save as PDF to keep a copy."),
+    h("h2", {}, "Daily summary"),
+    h("p", { class: "section-note" }, "Each running forward test: balance, the last 24 hours' result, and any open trade."),
+    h("label", { class: "check" }, h("input", { type: "checkbox", checked: r.daily, onchange: (e) => { r.daily = e.target.checked; } }), "Send me a daily summary"),
+    h("div", { class: "inline check-row" }, h("span", { class: "word" }, "Every day at"), dailyHour),
+    h("h2", {}, "Warnings"),
+    h("p", { class: "section-note" }, "Leave at 0 to turn off. Each warning is sent once and comes back only after things recover."),
+    h("div", { class: "fields" },
+      pctField("drawdown_pct", "Drawdown limit (%)", "Warn when a forward test falls this far below its best balance."),
+      pctField("near_pct", "Near stop or target (%)", "Warn when price has this much of the way left to an open trade's stop or target.")));
 }
 
 function backupSection() {
@@ -277,6 +293,13 @@ async function viewSettings() {
         h("div", { class: "channel" }, h("div", {}, h("h3", {}, "Discord"), h("p", { class: "small muted" }, "Create a webhook in your channel's settings.")),
           h("div", { class: "stack" }, enabled(n.discord, "Send alerts to Discord"), h("div", { class: "fields" },
             text(n.discord, "webhook_url", "Webhook URL", { secret: true })))),
+        h("div", { class: "channel" }, h("div", {}, h("h3", {}, "Telegram"), h("p", { class: "small muted" }, "Make a bot with @BotFather and send it a message. Get your chat ID from @userinfobot.")),
+          h("div", { class: "stack" }, enabled(n.telegram, "Send alerts to Telegram"), h("div", { class: "fields" },
+            text(n.telegram, "token", "Bot token", { secret: true, note: n.telegram.token_set ? "Saved. Leave blank to keep it" : "" }),
+            text(n.telegram, "chat_id", "Chat ID")))),
+        h("div", { class: "channel" }, h("div", {}, h("h3", {}, "Slack"), h("p", { class: "small muted" }, "Add an incoming webhook to your Slack app. Mattermost webhooks work too.")),
+          h("div", { class: "stack" }, enabled(n.slack, "Send alerts to Slack"), h("div", { class: "fields" },
+            text(n.slack, "webhook_url", "Webhook URL", { secret: true })))),
         h("div", { class: "channel" }, h("div", {}, h("h3", {}, "Webhook"), h("p", { class: "small muted" }, "Sends title, body, priority and tags as JSON.")),
           h("div", { class: "stack" }, enabled(n.webhook, "Send alerts to a webhook"), h("div", { class: "fields" },
             text(n.webhook, "url", "URL")))),

@@ -1,4 +1,4 @@
-"""Where alerts go: ntfy, Discord, a generic webhook, or the console."""
+"""Where alerts go: ntfy, Discord, Telegram, Slack, a generic webhook, email, or the console."""
 
 from __future__ import annotations
 
@@ -102,6 +102,45 @@ class DiscordNotifier(Notifier):
         _post(self.url, json.dumps(payload).encode(), {"Content-Type": "application/json"})
 
 
+class TelegramNotifier(Notifier):
+    """Message from your own Telegram bot (make one with @BotFather) to a chat ID."""
+
+    name = "telegram"
+    api = "https://api.telegram.org"
+
+    def __init__(self, token: str, chat_id: str | int):
+        if not token or not chat_id:
+            raise ValueError("telegram needs a bot token and a chat ID")
+        self.token, self.chat_id = token, str(chat_id)
+
+    def payload(self, msg: Message) -> dict:
+        return {"chat_id": self.chat_id, "text": f"{msg.title}\n{msg.body}"[:4000],
+                "disable_web_page_preview": True, "disable_notification": msg.priority in ("min", "low")}
+
+    def send(self, msg: Message) -> None:
+        _post(f"{self.api}/bot{self.token}/sendMessage", json.dumps(self.payload(msg)).encode(),
+              {"Content-Type": "application/json"})
+
+
+class SlackNotifier(Notifier):
+    """Slack incoming webhook (also works with Mattermost and other Slack-compatible chats)."""
+
+    name = "slack"
+
+    def __init__(self, webhook_url: str):
+        if not webhook_url:
+            raise ValueError("slack notifier needs webhook_url")
+        self.url = webhook_url
+
+    @staticmethod
+    def payload(msg: Message) -> dict:
+        text = f"*{msg.title}*\n{msg.body}"[:3900]
+        return {"text": text, "blocks": [{"type": "section", "text": {"type": "mrkdwn", "text": text}}]}
+
+    def send(self, msg: Message) -> None:
+        _post(self.url, json.dumps(self.payload(msg)).encode(), {"Content-Type": "application/json"})
+
+
 class WebhookNotifier(Notifier):
     """POSTs JSON {title, body, priority, tags} to any URL."""
 
@@ -169,12 +208,16 @@ def build_notifiers(specs: list[dict]) -> list[Notifier]:
             out.append(NtfyNotifier(**spec))
         elif kind == "discord":
             out.append(DiscordNotifier(**spec))
+        elif kind == "telegram":
+            out.append(TelegramNotifier(**spec))
+        elif kind == "slack":
+            out.append(SlackNotifier(**spec))
         elif kind == "webhook":
             out.append(WebhookNotifier(**spec))
         elif kind == "email":
             out.append(EmailNotifier(**spec))
         else:
-            raise ValueError(f"Unknown notifier type {kind!r}. Use ntfy, discord, webhook, email or console")
+            raise ValueError(f"Unknown notifier type {kind!r}. Use ntfy, discord, telegram, slack, webhook, email or console")
     return out
 
 

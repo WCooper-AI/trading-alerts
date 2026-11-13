@@ -109,7 +109,8 @@ window.addEventListener("hashchange", () => { paletteCache = null; });
 // browser and the desktop app agree.
 
 const BELL_ICON = { closed: "✓", opened: "↗", signal: "◆", skipped: "!", price: "◎", news: "🗓", error: "!",
-  strategy_saved: "✎", settings_changed: "⚙", alert_failed: "!" };
+  strategy_saved: "✎", settings_changed: "⚙", alert_failed: "!",
+  data_problem: "⚠", drawdown: "↘", near_level: "◎" };
 async function refreshBell(open = false) {
   const btn = document.getElementById("bell");
   const panel = document.getElementById("bell-panel");

@@ -10,7 +10,7 @@ from typing import Callable
 import pandas as pd
 
 from . import data as data_mod
-from . import timeframes, versions
+from . import timeframes, versions, watch
 from .config import AppConfig
 from .notify import Message, Notifier, broadcast
 from .backtest import fine_lookup, spreads_for
@@ -158,6 +158,11 @@ def process_strategy(
     if run is None:
         return []
     raw, fine = _split(loader(cfg, strategy))
+    send = is_live(strategy) and strategy.alerts_enabled
+    try:
+        watch.check_data(store, strategy, raw, run["id"], now, notifiers, send)
+    except Exception as exc:
+        log.warning("%s: data check failed: %s", strategy.id, exc)
     df = data_mod.closed_bars(raw, strategy.market.timeframe, now)
     if df.empty:
         log.warning("%s: no closed candles yet", strategy.id)
@@ -187,7 +192,6 @@ def process_strategy(
             store.save(strategy.id, str(cursor), state, strategy.source_hash)
         return []
 
-    send = is_live(strategy) and strategy.alerts_enabled
     prepared = strategy.prepare(df)
     sim = Simulator(strategy, state)
     get_fine = fine_lookup(fine, tf)
@@ -218,6 +222,14 @@ def process_strategy(
     sim.state["mark"] = {"time": str(df.index[last] + tf), "close": float(c[last])}
     store.commit()
     store.save(strategy.id, str(df.index[-1]), sim.state, strategy.source_hash)
+    rep = cfg.report or {}
+    try:
+        watch.check_drawdown(store, strategy, run, sim.state["equity"] + sim.unrealised(c[last]), now,
+                             float(rep.get("drawdown_pct") or 0), notifiers, send)
+        watch.check_near(store, strategy, run["id"], sim.position, float(c[last]), now,
+                         float(rep.get("near_pct") or 0), notifiers, send)
+    except Exception as exc:
+        log.warning("%s: watch checks failed: %s", strategy.id, exc)
     return all_events
 
 
@@ -393,6 +405,14 @@ class LiveRunner:
                     marker.write_text(pd_today(rep.get("tz")))
             except Exception as exc:
                 log.warning("Weekly report not sent: %s", exc)
+            try:
+                marker = cfg.data_dir / "daily.sent"
+                if cfg.report and watch.daily_due(cfg.report, marker):
+                    watch.send_daily(store, notifiers)
+                    marker.parent.mkdir(parents=True, exist_ok=True)
+                    marker.write_text(pd_today(cfg.report.get("tz")))
+            except Exception as exc:
+                log.warning("Daily summary not sent: %s", exc)
 
     def _price_loader(self, cfg, market: str, days: int = 3):
         from .pricealerts import load_recent

@@ -8,7 +8,8 @@ const ACTIVITY_FILTERS = [
   ["price", "Price alerts"], ["news", "News reminders"], ["changes", "Changes"], ["problems", "Problems"],
 ];
 const ACTIVITY_ICON = { closed: "✓", opened: "↗", signal: "◆", skipped: "!", price: "◎", news: "🗓", error: "!",
-  strategy_saved: "✎", settings_changed: "⚙", alert_failed: "!" };
+  strategy_saved: "✎", settings_changed: "⚙", alert_failed: "!",
+  data_problem: "⚠", drawdown: "↘", near_level: "◎" };
 
 async function viewActivity() {
   setNav("activity");
@@ -42,7 +43,7 @@ async function viewActivity() {
   }
 
   function item(x) {
-    const tone = x.kind === "closed" || x.kind === "opened" ? "trade" : x.kind === "error" || x.kind === "alert_failed" ? "problem"
+    const tone = x.kind === "closed" || x.kind === "opened" ? "trade" : ["error", "alert_failed", "data_problem", "drawdown"].includes(x.kind) ? "problem"
       : x.kind === "skipped" ? "warn" : x.kind === "signal" ? "signal" : "quiet";
     return h("li", { class: "activity-item " + tone + (x.unread ? " unread" : "") },
       h("span", { class: "activity-time muted" }, when(x.time)),
