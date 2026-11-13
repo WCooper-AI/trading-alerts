@@ -10,6 +10,7 @@ target/
 src-tauri/gen/
 selfhost/desktop/engine/build/
 selfhost/desktop/engine/dist/
+data/
 
 # your own setup and results
 .env
