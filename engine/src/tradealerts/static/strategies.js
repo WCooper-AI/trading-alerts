@@ -43,7 +43,7 @@ function createMenu({ big = false, label = "Create strategy" } = {}) {
   const away = (e) => { if (!menu.hidden && !menu.contains(e.target)) close(); };
   document.addEventListener("click", away);
   app.cleanups.push(() => document.removeEventListener("click", away));
-  return h("span", { class: "menu-wrap" }, file, btn, menu);
+  return h("span", { class: "menu-wrap" + (big ? " start" : "") }, file, btn, menu);
 }
 
 async function viewStrategies() {
