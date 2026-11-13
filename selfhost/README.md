@@ -5,7 +5,7 @@ running on your own computer or server.
 
 Build a strategy in the web interface, backtest it on historical data, then leave it
 running. Each time a candle closes it checks your rules, pushes an alert to your phone
-(ntfy, Discord, email or any webhook) when they trigger, and keeps a paper-trading record
+(ntfy, Telegram, Discord, Slack, email or any webhook) when they trigger, and keeps a paper-trading record
 so you can see how the rules do live before you risk money.
 
 > Not financial advice. You choose every rule and number; the included examples are
@@ -69,23 +69,28 @@ Experienced users can choose **Build from scratch** for the full rule builder.
 - **Forward tests with a dashboard.** Start one with a button and watch how a
   strategy does on live prices from that moment, with or without phone alerts.
   It uses the same engine as the backtester, so the results are directly comparable.
-- **Compare settings.** Run the same backtest with one setting changed across a
-  range (for example the RSI level from 20 to 40), with a both-halves check and a
-  warning about picking the luckiest value.
+- **Optimiser.** Test a grid of settings in the background (for example the RSI level
+  from 20 to 40) and see the results as a heatmap. A hold-out period and anchored
+  walk-forward run across the whole grid, ranking uses training data only, and it warns
+  you when you may be picking the luckiest value.
+- **Train/test split.** Keep 10–50% of the history back on any backtest and see the
+  results on data the settings never saw.
 - **Luck check.** Is a backtest's profit real or luck? Resamples the trades thousands
   of times, checks both halves of the period, and runs the rules on random price
   paths built from the market's own candles.
-- **Forward test vs backtest.** Shade the range the strategy's own backtest produced
-  over stretches as long as the forward test, to see if it's behaving as before.
+- **Live-vs-backtest range check.** Shows whether a forward test sits below, within or
+  above the range the strategy's own backtest produced over stretches of the same
+  length. Positions, not a score.
+- **Slippage and stock costs.** Slippage on every market fill, plus commission,
+  commission % and borrow cost for stocks, on top of spread and overnight funding.
 - **Live markets page.** Candlestick charts that refresh every 30 seconds, with a
   strategy's signals and paper trades marked, and **price alerts** ("tell me when
   gold goes above 2,700"): click the chart to set one.
 - **Trade journal.** Log the trades you actually place, link each to the forward-test
-  trade it came from, and see your slippage. Exports to CSV.
+  trade it came from, and see your slippage. **Log real trade** pre-fills an entry from
+  a paper trade. Exports to CSV.
 - **Test strategies together.** Several strategies on one shared balance: combined
   result, most money at risk at once, and how alike their daily results are.
-- **Walk-forward check** in Compare settings: picks the best value using only past
-  data, stretch by stretch, to show what tuning would really have given you.
 - **News filter.** A rule (and a guided-setup switch) to stay out around high-impact
   news. The US jobs report is built in; the weekly Forex Factory calendar is saved
   automatically so history builds up, and you can add your own events (Settings).
@@ -94,11 +99,14 @@ Experienced users can choose **Build from scratch** for the full rule builder.
 - **Share strategies.** Export the rules as a file, or copy a share link; imports
   always arrive as drafts, and results are never included.
 - **Backup and restore** everything in one zip, to move between the desktop app and
-  a server. A safety copy is made before every restore.
+  a server. A safety copy is made before every restore. **Redacted backups**
+  (`/api/backup?redact=true`) strip passwords, API tokens, webhook addresses and ntfy
+  topics so you can share a setup safely.
 - **Your own values.** Every setting starts blank; nothing is suggested for you.
-- **Liquid-glass interface** with light and dark themes and a choice of accent colour.
-- **Desktop app, browser or server.** Use it in your browser, build the desktop app
-  (Windows, macOS, Linux), or run it 24/7 in Docker on a home server or VPS. Everything
+- **Chart Desk interface** with light and dark themes and a choice of accent colour.
+- **Desktop app, browser or server.** Use it in your browser, use the desktop app
+  (Windows, macOS, Linux; for now only the Linux `.deb` and `.AppImage` are attached to
+  releases, Windows and macOS you build yourself), or run it 24/7 in Docker on a home server or VPS. Everything
   stays on your own machine: no cloud account and no outside requests from the browser.
   Works with public ntfy.sh or your own ntfy server.
 - **Your own price files.** Upload CSV files of candles and test strategies on them.

@@ -1,5 +1,8 @@
 # Builds the self-hosted desktop app (with the engine inside) for Windows, macOS and Linux.
 # Run it from the Actions tab, or push a tag like v0.2.0. The installers appear as downloads on the run.
+# On a v* tag, the "release" job also attaches the Linux .deb / .AppImage and the self-hosted zip
+# (scripts/release.py) to the GitHub Release. Windows and macOS builds are not attached until
+# they're signed (launch decision, 13 Nov 2026); they stay downloadable from the run.
 name: Desktop app (self-hosted)
 
 on:
@@ -99,3 +102,33 @@ jobs:
             selfhost/desktop/src-tauri/target/release/bundle/**/*.exe
             selfhost/desktop/src-tauri/target/release/bundle/**/*.dmg
           if-no-files-found: ignore
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Self-hosted zip
+        run: python scripts/release.py
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: trading-alerts-selfhosted-ubuntu-22.04
+          path: linux
+
+      - name: Attach to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          fail_on_unmatched_files: false
+          files: |
+            dist/trading-alerts-selfhosted-*.zip
+            linux/**/*.deb
+            linux/**/*.AppImage
