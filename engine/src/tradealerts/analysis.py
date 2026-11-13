@@ -656,6 +656,8 @@ def trade_window_ranges(backtest: pd.DataFrame, live: list[dict] | pd.DataFrame,
 MAX_OPT_SETTINGS = 3
 MAX_COMBOS = {"selfhost": 2000, "cloud": 200}
 SCORES = ("return", "return_dd", "profit_factor", "sharpe")
+MAX_HOLDOUT_PCT = 50
+WALK_FORWARD_FOLDS = (3, 4, 5, 6)
 
 
 def combo_count(axes: list[list]) -> int:
@@ -727,8 +729,112 @@ def run_chunk(df: pd.DataFrame, fine: pd.DataFrame | None, start: pd.Timestamp |
         except Exception as exc:  # noqa: BLE001 - an invalid combination is that row's error
             rows.append({**row, "error": str(exc)})
             continue
-        rows.append({**row, **summary(res), "sharpe": _sharpe(res.trades)})
+        rows.append({**row, **summary(res), "sharpe": _sharpe(res.trades), "_trades": _closed(res)})
     return rows
+
+
+def _closed(res: BacktestResult) -> tuple:
+    """(start equity, exit times as ns, P&L) of the closed trades: enough to replay the balance
+    over any stretch of the period without running the backtest again."""
+    t = res.trades
+    if not len(t):
+        return float(res.metrics.get("start_equity") or 0.0), np.empty(0, dtype="int64"), np.empty(0)
+    exits = pd.to_datetime(t["exit_time"], utc=True).to_numpy(dtype="datetime64[ns]").astype("int64")
+    return float(res.metrics.get("start_equity") or 0.0), exits, t["pnl"].to_numpy(dtype=float)
+
+
+def _ns(ts: pd.Timestamp) -> int:
+    ts = pd.Timestamp(ts)
+    return int((ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")).value)
+
+
+def stretch(closed: tuple, a: int, b: int | None) -> dict:
+    """How the trades that closed in [a, b) did, starting from the balance as it stood at ``a``.
+    A trade counts in the stretch its exit falls in, so a position open across the edge is
+    booked to the later stretch. ``b`` None means to the end (a position closed out when the
+    data ran out can be stamped just after the last candle)."""
+    start_eq, exits, pnl = closed
+    base = start_eq + float(pnl[exits < a].sum())
+    p = pnl[(exits >= a) & ((exits < b) if b is not None else True)]
+    wins, losses = float(p[p > 0].sum()), float(-p[p <= 0].sum())
+    eq = base + np.cumsum(p)
+    peak = np.maximum.accumulate(np.concatenate(([base], eq)))[1:]
+    dd = float(np.max((peak - eq) / peak * 100)) if len(p) and base > 0 else 0.0
+    sd = float(p.std(ddof=1)) if len(p) >= 2 else 0.0
+    return {
+        "trades": int(len(p)),
+        "return_pct": float(p.sum() / base * 100) if base > 0 else 0.0,
+        "max_drawdown_pct": dd,
+        "profit_factor": float(wins / losses) if losses > 0 else None,
+        "sharpe": float(p.mean() / sd * np.sqrt(len(p))) if sd > 0 else None,
+    }
+
+
+def _rank_key(row: dict, part: dict, score: str, min_trades: int) -> tuple:
+    sc = score_of({**row, **part}, score)
+    return (sc is not None, part["trades"] >= min_trades, sc if sc is not None else 0.0)
+
+
+def holdout_check(rows: list[dict], score: str, min_trades: int, a: int, cut: int, b: int, pct: float) -> dict:
+    """Rank on the first part of the period only, then show how the winner did on the part kept back."""
+    for r in rows:
+        if r["error"]:
+            r["train"] = r["holdout"] = None
+            continue
+        r["train"] = stretch(r["_trades"], a, cut)
+        r["holdout"] = stretch(r["_trades"], cut, None)
+    ok = [r for r in rows if not r["error"]]
+    out = {"pct": pct, "from": pd.Timestamp(cut, tz="UTC").isoformat(), "to": pd.Timestamp(b - 1, tz="UTC").isoformat(),
+           "best": None, "hindsight": None}
+    if not ok:
+        return out
+    best = max(ok, key=lambda r: _rank_key(r, r["train"], score, min_trades))
+    if score_of({**best, **best["train"]}, score) is not None:
+        out["best"] = {"values": best["values"], "train_return_pct": best["train"]["return_pct"],
+                       "holdout_return_pct": best["holdout"]["return_pct"], "holdout_trades": best["holdout"]["trades"]}
+    hind = max(ok, key=lambda r: r["holdout"]["return_pct"])
+    out["hindsight"] = {"values": hind["values"], "holdout_return_pct": hind["holdout"]["return_pct"]}
+    return out
+
+
+def walk_forward_grid(rows: list[dict], score: str, min_trades: int, a: int, b: int, folds: int, b_open: bool = True) -> dict:
+    """Walk-forward over the whole grid: before each stretch pick the combination with the best
+    score on everything so far, then record how it did on that stretch. Chaining those results
+    is what tuning as you went would have given you."""
+    ok = [r for r in rows if not r["error"]]
+    span = pd.Timedelta(b - a, unit="ns")
+    if len(ok) < 2:
+        return {"folds": folds, "skipped": "Too few combinations could be tested."}
+    if span < pd.Timedelta(days=30 * folds):
+        return {"folds": folds, "skipped": f"The period is too short to split into {folds} stretches: use at least {folds} months."}
+    edges = [int(x) for x in np.linspace(a, b, folds + 2)]
+    edges[-1] = None if b_open else edges[-1]
+    windows, chained = [], 1.0
+    for k in range(1, folds + 1):
+        scored = [(_rank_key(r, stretch(r["_trades"], edges[0], edges[k]), score, min_trades), r) for r in ok]
+        key, pick = max(scored, key=lambda x: x[0])
+        if not key[0]:
+            windows.append({"train_to": pd.Timestamp(edges[k], tz="UTC").isoformat(), "test_to": pd.Timestamp(edges[k + 1] or b - 1, tz="UTC").isoformat(),
+                            "values": None, "train_score": None, "test_return_pct": 0.0, "test_trades": 0})
+            continue
+        train = stretch(pick["_trades"], edges[0], edges[k])
+        test = stretch(pick["_trades"], edges[k], edges[k + 1])
+        chained *= 1 + test["return_pct"] / 100
+        windows.append({"train_to": pd.Timestamp(edges[k], tz="UTC").isoformat(), "test_to": pd.Timestamp(edges[k + 1] or b - 1, tz="UTC").isoformat(),
+                        "values": pick["values"], "train_score": key[2], "train_return_pct": train["return_pct"],
+                        "test_return_pct": test["return_pct"], "test_trades": test["trades"]})
+    later = [(stretch(r["_trades"], edges[1], edges[-1])["return_pct"], r["values"]) for r in ok]
+    hind_pct, hind_values = max(later, key=lambda x: x[0])
+    return {
+        "folds": folds,
+        "windows": windows,
+        "walk_forward_pct": (chained - 1) * 100,
+        "hindsight_pct": hind_pct,
+        "hindsight_values": hind_values,
+        "average_pct": float(np.mean([x[0] for x in later])),
+        "from": pd.Timestamp(edges[1], tz="UTC").isoformat(),
+        "to": pd.Timestamp(b - 1, tz="UTC").isoformat(),
+    }
 
 
 def _chunks(items: list, workers: int) -> list[list]:
@@ -738,8 +844,13 @@ def _chunks(items: list, workers: int) -> list[list]:
 
 def optimise(progress, variants: list[tuple[tuple, dict | str]], df: pd.DataFrame, fine: pd.DataFrame | None,
              start: pd.Timestamp | None, score: str = "return", min_trades: int = MIN_TRADES, workers: int = 1,
-             extra: dict | None = None) -> dict:
+             extra: dict | None = None, holdout_pct: float = 0, walk_forward_folds: int = 0) -> dict:
     """Backtest every combination and rank them by ``score``.
+
+    ``holdout_pct`` keeps back the last part of the period: rows are ranked on the rest and the
+    winner's result on the kept-back part is reported separately. ``walk_forward_folds`` > 0 adds
+    a walk-forward check over the grid (on the part that isn't kept back). Both reuse the one
+    backtest per combination, splitting its trades by when they closed.
 
     ``progress`` is a ``jobs.Progress`` (or None). With ``workers`` > 1 the chunks run in a
     process pool (self-hosted); otherwise one after another in this process (hosted, where
@@ -784,9 +895,17 @@ def optimise(progress, variants: list[tuple[tuple, dict | str]], df: pd.DataFram
 
     by_values = {tuple(r["values"]): r for r in rows}
     rows = [by_values[tuple(v)] for v, _ in variants]  # back in grid order
+    period_start = df.index[0] if start is None else max(df.index[0], start)
+    a, b = _ns(period_start), _ns(df.index[-1]) + 1
+    cut = a + int((b - a) * (1 - holdout_pct / 100)) if holdout_pct else b
+    holdout = holdout_check(rows, score, min_trades, a, cut, b, holdout_pct) if holdout_pct else None
+    wf = walk_forward_grid(rows, score, min_trades, a, cut, walk_forward_folds, b_open=not holdout_pct) if walk_forward_folds else None
     for r in rows:
-        r["score"] = score_of(r, score)
-        r["enough_trades"] = bool(not r["error"] and r.get("trades", 0) >= min_trades)
+        part = r["train"] if holdout and r.get("train") else {}
+        r["score"] = score_of({**r, **part}, score)
+        r["enough_trades"] = bool(not r["error"] and (part or r).get("trades", 0) >= min_trades)
+        r["holdout_score"] = score_of({**r, **r["holdout"]}, score) if holdout and r.get("holdout") else None
+        r.pop("_trades", None)
     ranked = sorted((r for r in rows if r["score"] is not None), key=lambda r: (r["enough_trades"], r["score"]), reverse=True)
     best = ranked[0] if ranked else None
     return {
@@ -794,6 +913,8 @@ def optimise(progress, variants: list[tuple[tuple, dict | str]], df: pd.DataFram
         "best": best["values"] if best else None,
         "score": score,
         "min_trades": min_trades,
+        "holdout": holdout,
+        "walk_forward": wf,
         "tested": sum(1 for r in rows if not r["error"]),
         "failed": sum(1 for r in rows if r["error"]),
         "seconds": round(time.time() - t0, 1),
