@@ -63,14 +63,24 @@ def normalise(df: pd.DataFrame, assume_tz: str = "UTC") -> pd.DataFrame:
     df["volume"] = df["volume"].fillna(0.0)
     df = df[~df.index.duplicated(keep="last")].sort_index()
     df = df.astype(float)
-    # Repair candles whose high/low don't contain the open/close (bad ticks in free feeds).
-    df["high"] = df[["open", "high", "low", "close"]].max(axis=1)
-    df["low"] = df[["open", "high", "low", "close"]].min(axis=1)
+    if "spread" in df.columns:
+        sp = df["spread"].dropna()
+        if not (np.isfinite(sp).all() and (sp >= 0).all()):
+            raise DataError("Price data has spreads that are negative or not a number. "
+                            "Spread is ask minus bid, so it must be 0 or more")
+    # Repair candles whose high/low don't contain the open/close (bad ticks in free feeds),
+    # and keep a count so data-quality warnings can mention it.
+    top = df[["open", "high", "low", "close"]].max(axis=1)
+    bottom = df[["open", "high", "low", "close"]].min(axis=1)
+    repaired = (df["high"] != top) | (df["low"] != bottom)
+    df["high"], df["low"] = top, bottom
     # Drop placeholder candles (no movement, no volume) in feeds that otherwise report volume:
     # free feeds insert them for closed sessions and they create false signals.
     if df["volume"].sum() > 0:
         flat = (df["high"] == df["low"]) & (df["volume"] == 0)
         df = df[~flat]
+        repaired = repaired[~flat]
+    df.attrs["repaired_bars"] = int(repaired.sum())
     return df
 
 
@@ -109,7 +119,9 @@ def resample_ohlcv(df: pd.DataFrame, timeframe: str, alignment: str = DEFAULT_AL
     else:
         out = df.resample(timeframes.to_pandas_rule(timeframe), label="left", closed="left",
                           origin="start_day").agg(agg)
-    return out.dropna(subset=["open", "high", "low", "close"])
+    out = out.dropna(subset=["open", "high", "low", "close"])
+    out.attrs.update(df.attrs)
+    return out
 
 
 def closed_bars(df: pd.DataFrame, timeframe: str, now: pd.Timestamp | None = None) -> pd.DataFrame:
@@ -309,7 +321,8 @@ class OandaProvider(Provider):
                 continue
             spread = np.nan
             if bid and ask:
-                spread = ((float(ask["o"]) - float(bid["o"])) + (float(ask["c"]) - float(bid["c"]))) / 2
+                # crossed quotes (ask below bid) happen now and then: treat as no spread
+                spread = max(0.0, ((float(ask["o"]) - float(bid["o"])) + (float(ask["c"]) - float(bid["c"]))) / 2)
             idx.append(pd.Timestamp(c["time"]))
             rows.append({"open": float(mid["o"]), "high": float(mid["h"]), "low": float(mid["l"]),
                          "close": float(mid["c"]), "volume": float(c.get("volume", 0)), "spread": spread})
@@ -589,7 +602,7 @@ class DukascopyProvider(Provider):
         for k in ("open", "high", "low", "close"):
             out[k] = (both[f"{k}_bid"] + both[f"{k}_ask"]) / 2
         out["volume"] = both["volume_bid"]
-        out["spread"] = ((both["open_ask"] - both["open_bid"]) + (both["close_ask"] - both["close_bid"])) / 2
+        out["spread"] = (((both["open_ask"] - both["open_bid"]) + (both["close_ask"] - both["close_bid"])) / 2).clip(lower=0)
         return normalise(out)
 
     def fetch_bars(self, symbol, timeframe, lookback_days, alignment=DEFAULT_ALIGNMENT):

@@ -77,7 +77,10 @@ class Simulator:
     def _half_spread(self, spread: float | None) -> float:
         if spread is None or (isinstance(spread, float) and math.isnan(spread)) or not self.s.use_data_spread:
             return self.s.spread / 2
-        return float(spread) / 2
+        spread = float(spread)
+        if not math.isfinite(spread) or spread < 0:
+            raise ValueError(f"Candle spread must be a finite number of 0 or more, got {spread}")
+        return spread / 2
 
     def _sizing_equity(self) -> float:
         return self.state["equity"] if self.s.risk.compound else self.s.risk.account_size

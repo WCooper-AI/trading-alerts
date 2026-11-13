@@ -154,7 +154,7 @@ def backtest(data: dict, df, fine, test_start, notes: list[str]) -> dict:
         "trades": trades,
         "trade_count": len(res.trades),
         "currency": s.risk.symbol,
-        "monte_carlo": analysis.monte_carlo(res.trades, s.risk.account_size) if len(res.trades) >= 2 else None,
+        "monte_carlo": analysis.monte_carlo(res.trades, s.risk.account_size, compound=s.risk.compound) if len(res.trades) >= 2 else None,
     }
     if not len(res.trades):
         out["why_no_trades"] = analysis.why_no_trades(s, df, test_start)

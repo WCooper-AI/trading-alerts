@@ -544,22 +544,28 @@ def _max_drawdown(eq: np.ndarray) -> np.ndarray:
 
 
 def monte_carlo(trades: pd.DataFrame, start_equity: float, rng: np.random.Generator | None = None,
-                runs: int = N_SHUFFLES) -> dict | None:
+                runs: int = N_SHUFFLES, compound: bool = True) -> dict | None:
     """Shuffle the order of the backtest's trades ``runs`` times and measure the worst drawdown
-    of each order. Each trade's gain is kept as a % of the balance before it, so the sizes
-    still compound. None with fewer than 2 trades."""
+    of each order. With ``compound`` each trade's gain is kept as a % of the balance before it,
+    so the sizes still compound; without it (fixed position sizes) each trade's money result is
+    added as is. None with fewer than 2 trades."""
     n = len(trades)
     if n < 2:
         return None
     rng = rng or np.random.default_rng(0)
-    before = (trades["equity_after"] - trades["pnl"]).to_numpy(dtype=float)
-    pct = trades["pnl"].to_numpy(dtype=float) / np.where(before > 0, before, np.nan)
-    pct = np.nan_to_num(pct)
+    pnl = trades["pnl"].to_numpy(dtype=float)
     perms = np.argsort(rng.random((runs, n)), axis=1)
-    eq = start_equity * np.cumprod(1 + pct[perms], axis=1)
+    if compound:
+        before = (trades["equity_after"] - trades["pnl"]).to_numpy(dtype=float)
+        pct = np.nan_to_num(pnl / np.where(before > 0, before, np.nan))
+        eq = start_equity * np.cumprod(1 + pct[perms], axis=1)
+        path = start_equity * np.cumprod(1 + pct)
+    else:
+        eq = start_equity + np.cumsum(pnl[perms], axis=1)
+        path = start_equity + np.cumsum(pnl)
     eq = np.concatenate([np.full((runs, 1), start_equity), eq], axis=1)
     dd = _max_drawdown(eq)
-    actual = float(_max_drawdown(np.concatenate([[start_equity], start_equity * np.cumprod(1 + pct)]))[()])
+    actual = float(_max_drawdown(np.concatenate([[start_equity], path]))[()])
     p5, p50, p95 = (float(x) for x in np.percentile(dd, [5, 50, 95]))
     return {"actual_dd": actual, "median_dd": p50, "bad_dd": p5, "good_dd": p95, "runs": runs,
             "p5": p5, "p50": p50, "p95": p95, "histogram": _dd_histogram(dd)}
@@ -639,7 +645,7 @@ def luck_check(strategy: Strategy, df: pd.DataFrame, fine: pd.DataFrame | None, 
             "If many of those sets lose money, the profit leans on a handful of trades. Under 5% passes.",
         ))
         # trade order: how bad could the drawdown have been with the same trades in another order?
-        out["order"] = monte_carlo(trades, strategy.risk.account_size, rng)
+        out["order"] = monte_carlo(trades, strategy.risk.account_size, rng, compound=strategy.risk.compound)
     else:
         checks.append(_Check("resample", None, "Too few trades to resample",
                              "Needs at least 5 trades."))
