@@ -279,7 +279,7 @@ async function viewEditor(id, exampleName, preloaded, run) {
     if (d.exit && d.exit.when && !groupItems(d.exit.when).length) delete d.exit.when;
     if (d.exit && (d.exit.max_bars === null || d.exit.max_bars === undefined)) delete d.exit.max_bars;
     for (const k of ["max_size", "point_value", "size_step", "min_size"]) if (d.risk && isBlank(d.risk[k])) delete d.risk[k];
-    for (const k of ["spread", "funding_pct"]) if (d.costs && isBlank(d.costs[k])) delete d.costs[k];
+    for (const k of ["spread", "funding_pct", "slippage", "slippage_pct"]) if (d.costs && isBlank(d.costs[k])) delete d.costs[k];
     if (d.exit && d.exit.target === null) delete d.exit.target;
     if (d.market && !d.market.lookback_days) delete d.market.lookback_days;
     if (!d.description) delete d.description;
@@ -699,6 +699,8 @@ const RISK_HELP = {
   min_size: "The smallest trade your broker accepts. A signal that would need less than this is skipped rather than traded bigger. Blank means 0.01.",
   max_size: "An upper limit on trade size, if your broker has one or you want one. Blank means no limit.",
   spread: "The gap between the buy and sell price, in price points, which you pay on every trade. It's only used when the price data doesn't include it (Dukascopy and OANDA do). Your broker's market info page shows it; it's usually wider overnight and around news.",
+  slippage: "Market orders (entries, stop losses, exit rules) often fill a little worse than the price you saw, especially in fast markets. This many price points are taken off every such fill, on top of the spread. Targets are limit orders and get none. Blank means none.",
+  slippage_pct: "The same as slippage in points, but as a percentage of the fill price, which suits markets whose price varies a lot over time. Can be combined with points. Blank means none.",
   funding_pct: "The yearly interest your broker charges for holding a CFD past its daily cut-off (around 10pm UK time). Brokers publish it as a daily or yearly rate: enter the yearly percentage. Blank uses the built-in market's typical rate.",
   priority: "How phone alerts arrive in ntfy. High and urgent can sound even when the phone is on Do Not Disturb (depending on your phone's settings).",
   compound: "On: trade sizes grow and shrink with the balance, like a real account. Off: every trade is sized from the starting balance, which makes results from different periods easier to compare.",
@@ -757,6 +759,8 @@ function riskSection(data, changed) {
       f("Maximum size", "max_size", { step: "any", min: "0", allowEmpty: true }, r, "Leave blank for no limit"),
       f("Spread (points)", "spread", { step: "any", min: "0", allowEmpty: true }, c, "Used when the price data has no bid/ask. Blank: the built-in market's typical spread, otherwise none"),
       f("Overnight funding (% a year)", "funding_pct", { step: "0.1", min: "0", allowEmpty: true }, c, "Charged for each night a trade is open. Blank: the built-in market's typical rate, otherwise none"),
+      f("Slippage (points)", "slippage", { step: "any", min: "0", allowEmpty: true }, c, "Lost on each entry, stop and exit fill. Blank: none"),
+      f("Slippage (% of price)", "slippage_pct", { step: "0.01", min: "0", allowEmpty: true }, c, "Lost on each entry, stop and exit fill. Blank: none"),
       h("div", { class: "field" }, h("label", {}, "Alert priority", infoTip(RISK_HELP.priority)), prio)),
     h("div", { class: "inline", style: null },
       h("label", { class: "check" }, h("input", { type: "checkbox", checked: r.compound !== false,

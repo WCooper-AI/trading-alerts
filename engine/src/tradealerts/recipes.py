@@ -20,6 +20,8 @@ from typing import Any, Callable
 # point_value: money per 1.0 price move for 1 unit of size, so that size reads as "£ per point".
 # funding: rough yearly overnight funding %, a starting value to check with a broker.
 # borrow / commission (stocks): rough yearly borrow fee % for shorts, and money per fill.
+# slippage / slippage_pct (optional): price points or % lost per market fill. No built-in market
+#   sets them, so they default to 0 and only apply when a strategy fills them in.
 # exchange: exchange_calendars code for markets that only trade in exchange hours.
 # symbol / oanda: the market's name at each data source (chosen in Settings).
 MARKETS: list[dict[str, Any]] = [

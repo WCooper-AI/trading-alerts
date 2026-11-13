@@ -703,6 +703,7 @@ function renderBacktest(res) {
   const sym = res.currency;
   const box = h("div");
   const ret = m.total_return_pct;
+  if (m.sample_warning) box.appendChild(h("p", { class: "sample-warning", role: "note" }, m.sample_warning));
   append(box, [h("div", { class: "headline" },
     h("div", {}, h("div", { class: "big " + (ret >= 0 ? "gain" : "loss") }, signed(ret, "%")), h("div", { class: "lbl" }, "Return")),
     h("div", {}, h("div", { class: "big" }, num(m.max_drawdown_pct, 1) + "%"), h("div", { class: "lbl" }, "Worst drawdown")),
@@ -722,12 +723,14 @@ function renderBacktest(res) {
     ["Largest win / loss", `${money(m.largest_win, sym)} / ${money(m.largest_loss, sym)}`],
     ["Longest winning / losing run", `${m.longest_winning_streak} / ${m.longest_losing_streak}`],
     ["Candles held on average", `${num(m.avg_bars_held, 1)} (${hours(m.avg_hold_hours)})`],
-    ["Sharpe / Sortino (yearly)", `${num(m.sharpe)} / ${num(m.sortino)}`],
+    ["Sharpe (yearly)", num(m.sharpe) + (m.sharpe_ci ? ` (95% CI: ${num(m.sharpe_ci[0])} to ${num(m.sharpe_ci[1])})` : "")],
+    ["Sortino (yearly)", num(m.sortino)],
     ["Longest time below a previous high", `${num(m.longest_underwater_days, 1)} days`],
     ["How trades ended", Object.entries(m.exit_reasons || {}).map(([k, v]) => `${k.replace(/_/g, " ")} ${v}`).join(", ")],
     ["Spread paid", money(m.total_spread_cost || 0, sym) + (m.used_data_spread ? " (real bid/ask)" : "")],
     ["Overnight funding paid", money(m.total_funding || 0, sym) + (m.total_borrow ? ` (of which borrow fee ${money(m.total_borrow, sym)})` : "")],
     ...(m.total_commission ? [["Commission paid", money(m.total_commission, sym)]] : []),
+    ...(m.total_slippage ? [["Slippage paid", money(m.total_slippage, sym)]] : []),
     ["Stop or target first?", m.used_finer_candles ? "Checked with finer candles" : "Stop assumed first"],
   );
   append(box, [h("dl", { class: "metrics" }, rows.map(([k, v]) => [h("dt", {}, k), h("dd", {}, v)]))]);
@@ -922,6 +925,8 @@ function testStamp(meta, sym) {
     ["Warm-up before the period", meta.warmup_candles ? `${meta.warmup_candles} candles` : "None (the data starts here)"],
     ["Spread", spread],
     ["Overnight funding", meta.funding_pct ? `${short(meta.funding_pct)}% a year` : "None"],
+    ["Slippage per fill", [meta.slippage ? `${short(meta.slippage)} price points` : "", meta.slippage_pct ? `${short(meta.slippage_pct)}% of price` : ""]
+      .filter(Boolean).join(" + ") || "None"],
     ["Tested", `${when(meta.tested_at)}, Trading Alerts ${meta.engine_version}`],
   ];
   return h("details", { class: "chart stamp" }, h("summary", {}, "How this was tested"),
