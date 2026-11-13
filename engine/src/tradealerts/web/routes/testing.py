@@ -202,7 +202,46 @@ def portfolio(request: Request, body: dict = Body(...), ws: Workspace = Depends(
     if len(currencies) > 1:
         err(422, "These strategies use different currencies. Choose ones in the same currency.")
     sym = CURRENCY_SYMBOLS.get(currencies.pop(), "")
-    return _run(request, ws, compute.portfolio, parts, float(balance), sym, notes)
+    return _run(request, ws, compute.portfolio, parts, float(balance), sym, notes, _portfolio_options(body, ids))
+
+
+def _portfolio_options(body: dict, ids: list[str]) -> dict:
+    """Weighting and shared-account settings for /api/portfolio, checked with plain messages."""
+    weighting = body.get("weighting") or "equal"
+    if weighting not in analysis.WEIGHTING_MODES:
+        err(422, "Choose a weighting: equal, inverse volatility or custom")
+    weights = None
+    if weighting == "custom":
+        weights = body.get("weights")
+        if not isinstance(weights, dict):
+            err(422, "Fill in a share (%) for every chosen strategy")
+        for sid in ids:
+            v = weights.get(sid)
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0:
+                err(422, "Fill in a share (%) of 0 or more for every chosen strategy")
+        if sum(weights.get(sid, 0) for sid in ids) <= 0:
+            err(422, "The shares must add up to more than 0")
+        weights = {sid: float(weights[sid]) for sid in ids}
+    shared = bool(body.get("shared"))
+    max_open_trades = body.get("max_open_trades")
+    if max_open_trades not in (None, ""):
+        if isinstance(max_open_trades, bool) or not isinstance(max_open_trades, (int, float)) \
+                or max_open_trades != int(max_open_trades) or max_open_trades < 1:
+            err(422, "Most trades open at once must be a whole number of 1 or more")
+        max_open_trades = int(max_open_trades)
+    else:
+        max_open_trades = None
+    max_open_risk_pct = body.get("max_open_risk_pct")
+    if max_open_risk_pct not in (None, ""):
+        if isinstance(max_open_risk_pct, bool) or not isinstance(max_open_risk_pct, (int, float)) or max_open_risk_pct <= 0:
+            err(422, "Most at risk at once must be a % above 0")
+        max_open_risk_pct = float(max_open_risk_pct)
+    else:
+        max_open_risk_pct = None
+    if not shared and (max_open_trades is not None or max_open_risk_pct is not None):
+        err(422, "The caps only apply when the strategies share one account")
+    return {"weighting": weighting, "weights": weights, "shared": shared,
+            "max_open_trades": max_open_trades, "max_open_risk_pct": max_open_risk_pct}
 
 
 # --------------------------------------------------------------------------- optimiser
