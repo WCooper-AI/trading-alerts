@@ -34,7 +34,7 @@ def client(ws):
 
 def test_index_and_security_headers(client):
     r = client.get("/")
-    assert r.status_code == 200 and "Trading Alerts" in r.text
+    assert r.status_code == 200 and "Altius" in r.text
     assert "default-src 'self'" in r.headers["content-security-policy"]
     assert r.headers["x-frame-options"] == "DENY"
     from tradealerts.web.app import SCRIPTS
