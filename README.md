@@ -12,6 +12,9 @@ Open source under [GNU AGPL-3.0](LICENSE). Runs locally on your own computer or 
 
 ![Altius dark mode UI](docs/img/hero.png)
 
+> [!TIP]
+> **Don't want to manage a server?** Run Altius in the cloud—get continuous monitoring and alerts without keeping your computer running. **£9/month, 7-day free trial** → [Try Altius free](https://trading.william-cooper.uk/?utm_source=github&utm_medium=readme&utm_campaign=launch)
+
 > [!IMPORTANT]
 > **Not financial advice.** Altius follows rules you set—it doesn't recommend trades.
 > Backtests are simulations, and leveraged products such as CFDs and spread bets carry a high risk of
