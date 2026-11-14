@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 
 from .. import data as data_mod
-from ..backtest import warmup_days
+from ..backtest import lookback_for_start
 from ..workspace import Workspace
 from .common import err
 
@@ -37,7 +37,7 @@ def load_period(ctx, ws: Workspace, s, body: dict, end_at: pd.Timestamp | None =
     if test_start is not None and end is not None and test_start >= end:
         err(422, "The start date must be before the end date")
     if test_start is not None:
-        lookback = max(1, (now - test_start).days) + warmup_days(m.timeframe, warmup or s.warmup_candles)
+        lookback = lookback_for_start(m.timeframe, test_start, warmup or s.warmup_candles, now)
     provider = data_mod.provider_for(c, m.provider, m.tz)
     try:
         source = c.data.get("source") if m.provider == "auto" else m.provider

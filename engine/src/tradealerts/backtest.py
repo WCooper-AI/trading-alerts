@@ -62,6 +62,13 @@ def warmup_days(timeframe: str, candles: int = WARMUP_CANDLES) -> int:
     return max(30, int(span / pd.Timedelta(days=1)) + 1)
 
 
+def lookback_for_start(timeframe: str, test_start: pd.Timestamp, candles: int = WARMUP_CANDLES,
+                       now: pd.Timestamp | None = None) -> int:
+    """Calendar days of prices to load so a test starting at ``test_start`` also gets its warm-up."""
+    now = pd.Timestamp.now(tz="UTC") if now is None else now
+    return max(1, (now - test_start).days) + warmup_days(timeframe, candles)
+
+
 MIN_SPLIT_PCT, MAX_SPLIT_PCT = 50, 90
 
 

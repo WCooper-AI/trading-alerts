@@ -134,6 +134,10 @@ def cmd_backtest(args) -> int:
         if args.years:
             from .backtest import warmup_days
             s.market.lookback_days = int(args.years * 365.25) + warmup_days(s.market.timeframe, s.warmup_candles)
+        elif args.start:
+            from .backtest import lookback_for_start
+            start_at = pd.Timestamp(args.start, tz="UTC")
+            s.market.lookback_days = lookback_for_start(s.market.timeframe, start_at, s.warmup_candles)
         df, fine = load_market_data(cfg, s)
         notes = data_mod.data_notes(s.market.symbol, s.market.provider, cfg.data)
     start = None
