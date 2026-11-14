@@ -12,6 +12,10 @@ Open source under [GNU AGPL-3.0](LICENSE). Runs locally on your own computer or 
 
 ![Altius dark mode UI](docs/img/hero.png)
 
+## See Altius in action
+
+![Altius product demo](docs/img/demo.gif)
+
 > [!IMPORTANT]
 > **Not financial advice.** Altius follows rules you set—it doesn't recommend trades.
 > Backtests are simulations, and leveraged products such as CFDs and spread bets carry a high risk of
