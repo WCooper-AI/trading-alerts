@@ -110,7 +110,7 @@ def candles(request: Request, market: str = "", strategy: str = "", timeframe: s
     # data stops short (allow 2 candles, or the shut spell); saved: the feed didn't answer, old copy shown
     if stale:
         feed = "saved"
-    elif age is not None and age > 2 * bar and closed_until is None:
+    elif age is not None and age > 2 * bar and (closed_until is None or age > pd.Timedelta(days=4)):
         feed = "delayed"
     else:
         feed = "fresh"
