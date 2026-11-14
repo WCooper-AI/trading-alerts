@@ -10,8 +10,6 @@ Open source under [GNU AGPL-3.0](LICENSE). Runs locally on your own computer or 
 
 [First 5 Minutes](#your-first-5-minutes-with-altius) · [Features](#key-features) · [Install](#install-self-hosted-free) · [Methodology](#backtesting-methodology--transparency) · [Privacy & Architecture](#privacy--architecture) · [Self-Hosted vs Hosted](#self-hosted-vs-hosted) · [Development](#development)
 
-![Altius dark mode UI](docs/img/hero.png)
-
 ## See Altius in action
 
 ![Altius product demo](docs/img/demo.gif)
